@@ -1,0 +1,16 @@
+{
+  "id": "qdm-query-card",
+  "name": "QDM Query Card",
+  "version": "0.0.1",
+  "type": "general",
+  "description": "企业微信查数卡片插件：命中触发词后回交互卡片，跳转 H5 手动勾选查询条件。",
+  "author": "QDM",
+  "entry": {
+    "backend": "plugin.py"
+  },
+  "dependencies": [],
+  "qwenpaw_version": {
+    "min": "2.1.0",
+    "max": "2.2.0"
+  }
+}

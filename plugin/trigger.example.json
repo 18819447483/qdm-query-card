@@ -1,0 +1,97 @@
+{
+  "enabled": true,
+
+  "trigger": {
+    "phrases": ["手动查询数据", "手动取数"],
+    "match": "equals_then_contains"
+  },
+
+  "result_mode": "inject",
+
+  "queryMode": "direct",
+
+  "followUp": {
+    "enabled": true,
+    "ttlSec": 1800,
+    "maxRows": 20,
+    "contextInject": true,
+    "autoTimeShift": false
+  },
+
+  "probe": {
+    "enabled": false,
+    "trigger": "卡片探针",
+    "alsoOnTrigger": false,
+    "attachListener": true
+  },
+
+  "delivery": {
+    "short_circuit": true,
+    "placeholder_mode": "host",
+    "absorb_placeholder": false,
+    "placeholder_closing_text": "已为你打开查数面板，请点击上方卡片选择条件。",
+    "fallback_text": "",
+    "fallback_markdown": true
+  },
+
+  "card": {
+    "title": "🔍 手动查数",
+    "desc": "点击卡片，选择查询条件后提交",
+    "buttonDesc": "点击下方按钮打开面板，链接只有你可见"
+  },
+
+  "groupGuard": {
+    "mode": "claim",
+    "buttonDelivery": true,
+    "buttonJump": false,
+    "jumpRedeemMax": 6,
+    "buttonText": "打开查数面板",
+    "buttonTtlSec": 3600,
+    "attachListener": true,
+    "linkCardTitle": "✅ 面板已就绪",
+    "linkCardDesc": "点击本卡片打开查数面板（链接只有你能看到）",
+    "buttonClosingText": "查数面板已生成，请点击上方卡片打开（链接只有你能看到）。",
+    "buttonFallbackText": "查数面板发送失败，请重新发送触发词。",
+    "claimTtlSec": 3600,
+    "applyToPrivate": false,
+    "triggerHint": "手动查询数据"
+  },
+
+  "security": {
+    "token_ttl_sec": 86400
+  },
+
+  "publicBaseUrl": "http://REPLACE_ME:8088",
+
+  "h5Path": "/api/frontend_plugin/qdm-query-card/files/h5/index.html",
+
+  "authCenter": {
+    "enabled": true,
+    "baseUrl": "http://127.0.0.1:4008",
+    "systemCode": "BI",
+    "apiKey": "",
+    "cacheSec": 300,
+    "timeoutSec": 4
+  },
+
+  "direct": {
+    "runtimeMcpUrl": "http://127.0.0.1:8765/mcp",
+    "runtimeTokenFile": "",
+    "cliPath": "",
+    "timeoutSec": 90.0,
+    "blobTimeoutSec": 8.0,
+    "maxRows": 20
+  },
+
+  "cli": {
+    "path": "",
+    "timeoutSec": 20.0
+  },
+
+  "limits": {
+    "submitCooldownSec": 180,
+    "maxPendingSubmissions": 4,
+    "dimValuesConcurrency": 4,
+    "dimValuesCacheSec": 60
+  }
+}

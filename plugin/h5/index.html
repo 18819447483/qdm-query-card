@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>手动查数</title>
+<style>
+  :root{
+    --bg:#f2f3f5; --card:#fff; --line:#e8eaed; --text:#1f2329;
+    --sub:#8a9099; --brand:#1677ff; --brand-dim:#e8f1ff;
+    --ok:#00b96b; --warn:#d4380d; --chip:#f6f7f9;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+  }
+
+  /* ---------- 顶部 ---------- */
+  .top{
+    position:sticky;top:0;z-index:20;background:var(--bg);
+    padding:10px 12px 8px;border-bottom:1px solid var(--line);
+  }
+  .top .inner{max-width:820px;margin:0 auto}
+  .hd{display:flex;align-items:baseline;justify-content:space-between;margin:0 2px 8px}
+  .hd h1{font-size:18px;margin:0;font-weight:600}
+  .hd .who{font-size:12px;color:var(--sub)}
+  .tabs{
+    display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;padding-bottom:2px;
+  }
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{
+    flex:none;padding:6px 12px;border-radius:16px;font-size:13px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:#5a6068;white-space:nowrap;
+  }
+  .tab.on{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:500}
+  .tab .tn{opacity:.75;font-size:11px;margin-left:4px}
+
+  /* ---------- 卡片舞台：横向滑动 ---------- */
+  .deck{
+    display:flex;gap:14px;overflow-x:auto;overflow-y:hidden;
+    scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;padding:14px 12px 96px;
+  }
+  .deck::-webkit-scrollbar{display:none}
+  @media (min-width:900px){ .deck{max-width:820px;margin:0 auto} }
+  .card{
+    flex:0 0 100%;scroll-snap-align:start;background:var(--card);
+    border-radius:14px;box-shadow:0 1px 3px rgba(0,0,0,.06);
+    overflow:hidden;display:flex;flex-direction:column;
+  }
+  .c-hd{
+    display:flex;align-items:center;gap:8px;padding:13px 16px;
+    border-bottom:1px solid var(--line);background:#fbfcfd;
+  }
+  .c-hd .ci{font-size:17px}
+  .c-hd .cn{font-weight:600;font-size:16px}
+  .c-hd .cc{margin-left:auto;font-size:12px;color:var(--brand)}
+
+  .sec{border-bottom:1px solid var(--line)}
+  .sec:last-child{border-bottom:0}
+  .st{
+    display:flex;align-items:center;gap:7px;padding:11px 16px 9px;
+    font-size:13.5px;font-weight:600;color:#3a4048;
+  }
+  .st .sn{
+    width:18px;height:18px;border-radius:50%;background:var(--brand);color:#fff;
+    font-size:11px;display:flex;align-items:center;justify-content:center;flex:none;
+  }
+  .st .sc{margin-left:auto;font-size:12px;color:var(--sub);font-weight:400}
+  .sb{padding:0 16px 14px}
+
+  /* ---------- ① 权限 / 时间 / 口径 ---------- */
+  .auth{
+    background:#f8fafd;border:1px solid #e6eefb;border-radius:9px;
+    padding:9px 12px;margin-bottom:11px;font-size:12.5px;
+  }
+  .auth .at{color:var(--sub);font-weight:600;margin-bottom:5px}
+  .auth .ar{display:flex;gap:6px;margin-bottom:3px;flex-wrap:wrap}
+  .auth .ar:last-child{margin-bottom:0}
+  .auth .an{color:#5a6068;flex:none}
+  .auth .av{color:var(--brand);word-break:break-all}
+  .auth .aoff{font-size:12px;color:var(--sub)}
+  .auth .aown{
+    font-size:12.5px;color:#8a5a00;background:#fff7e6;border:1px solid #ffe4ad;
+    border-radius:7px;padding:6px 9px;margin-bottom:8px;line-height:1.6;
+  }
+  .auth .aown:last-child{margin-bottom:0}
+
+  .fld{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .fld:last-child{margin-bottom:0}
+  .fld > .lb{width:52px;flex:none;font-size:13.5px;color:#5a6068}
+  input[type=date],input[type=search],select{
+    flex:1;min-width:120px;height:36px;padding:0 9px;font-size:14px;
+    border:1px solid var(--line);border-radius:7px;background:#fff;color:var(--text);
+  }
+  select{appearance:none;-webkit-appearance:none;max-width:100%}
+  .segs{display:flex;gap:7px;flex-wrap:wrap}
+  .seg{
+    padding:6px 13px;border:1px solid var(--line);border-radius:16px;
+    font-size:13px;background:#fff;color:#4a5058;cursor:pointer;
+  }
+  .seg.on{background:var(--brand-dim);border-color:var(--brand);color:var(--brand);font-weight:500}
+  .seg.dis{opacity:.32;cursor:not-allowed}
+  .sw{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;color:#5a6068;cursor:pointer}
+  .sw input{width:16px;height:16px;accent-color:var(--brand)}
+
+  /* ---------- ② 指标 chips ---------- */
+  .mbar{display:flex;gap:8px;align-items:center;margin-bottom:9px;padding:0 16px}
+  .mbar input{flex:1}
+  .mclear{
+    flex:none;width:22px;height:22px;border-radius:50%;background:#e9edf3;color:#5a6068;
+    display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;
+    cursor:pointer;user-select:none;
+  }
+  .mclear:active{background:#dfe4ec}
+  .mgrid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:6px;
+    max-height:296px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    border:1px solid var(--line);border-radius:9px;padding:8px;background:#fcfcfd;
+  }
+  @media (max-width:520px){ .mgrid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));max-height:260px} }
+  .chip{
+    display:flex;align-items:center;gap:6px;padding:7px 9px;border-radius:8px;
+    background:var(--chip);border:1px solid transparent;font-size:13px;cursor:pointer;min-width:0;
+  }
+  .chip .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip .c{font-size:10.5px;color:var(--sub);flex:none;max-width:44%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip.on{background:var(--brand-dim);border-color:var(--brand);color:var(--brand);font-weight:500}
+  .chip.on .c{color:var(--brand);opacity:.7}
+  .more{
+    margin-top:8px;font-size:12.5px;color:var(--brand);cursor:pointer;text-align:center;padding:5px;
+  }
+  .empty{padding:16px;text-align:center;font-size:13px;color:var(--sub)}
+
+  /* ---------- ③ 维度 ---------- */
+  .dims{display:flex;flex-wrap:wrap;gap:7px}
+  .dchip{
+    padding:7px 12px;border-radius:16px;font-size:13px;cursor:pointer;
+    background:var(--chip);border:1px solid transparent;
+  }
+  .dchip.on{background:var(--brand-dim);border-color:var(--brand);color:var(--brand);font-weight:500}
+  .dgrp{font-size:12px;color:var(--sub);margin:10px 0 5px}
+  .dgrp:first-child{margin-top:0}
+
+  /* ---------- ④ 过滤 ---------- */
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .tags:empty{margin:0}
+  .tag{
+    display:inline-flex;align-items:center;gap:5px;font-size:12.5px;
+    background:var(--brand-dim);color:var(--brand);border-radius:5px;padding:3px 7px;
+  }
+  .tag b{font-weight:400;cursor:pointer;font-size:14px;line-height:1}
+  .flist{
+    max-height:186px;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    border:1px solid var(--line);border-radius:9px;background:#fcfcfd;margin-top:8px;
+  }
+  .li{padding:8px 11px;border-bottom:1px solid #f2f3f5;font-size:13.5px;display:flex;gap:8px;align-items:center;cursor:pointer}
+  .li:last-child{border-bottom:0}
+  .li.on{background:#f5f9ff;color:var(--brand)}
+  .li .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .li .c{font-size:11px;color:var(--sub);flex:none}
+  .hint{font-size:12px;color:var(--sub);margin-top:7px;line-height:1.5}
+
+  /* ---------- 底部操作 ---------- */
+  .bar{
+    position:fixed;left:0;right:0;bottom:0;z-index:30;
+    background:rgba(255,255,255,.97);border-top:1px solid var(--line);
+    padding:9px 12px calc(9px + env(safe-area-inset-bottom));
+  }
+  .bar .inner{max-width:820px;margin:0 auto;display:flex;gap:10px;align-items:center}
+  .bar .tip{
+    position:absolute;left:0;right:0;top:-26px;font-size:11.5px;color:var(--sub);
+    text-align:center;background:rgba(242,243,245,.94);padding:3px 0;
+  }
+  .btn{
+    flex:1;height:44px;border-radius:9px;font-size:16px;border:1px solid var(--line);
+    background:#fff;color:#4a5058;cursor:pointer;
+  }
+  .btn.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:500}
+  .btn:disabled{opacity:.5}
+
+  /* ---------- 遮罩 / 完成 ---------- */
+  .mask{
+    position:fixed;inset:0;background:var(--bg);display:flex;
+    align-items:center;justify-content:center;flex-direction:column;gap:10px;
+    font-size:15px;color:var(--sub);text-align:center;padding:32px;line-height:1.7;z-index:50;
+  }
+  .mask b{color:var(--text);font-size:17px}
+  .gate{
+    background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px 20px 16px;
+    max-width:380px;width:calc(100% - 48px);text-align:left;color:var(--text);
+    box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;flex-direction:column;gap:9px;
+  }
+  .gate .gi{font-size:24px;align-self:center;margin-bottom:-4px}
+  .gate b{font-size:16px;text-align:center}
+  .gate div{font-size:13.5px;color:#5a6068;line-height:1.7}
+  .gate .gh{font-size:12px;color:var(--sub);border-top:1px dashed var(--line);padding-top:9px}
+  .gate input{width:100%;box-sizing:border-box}
+  .gate .btn{align-self:flex-start;padding:8px 18px}
+  .done-box{
+    background:#fff;border:1px solid var(--line);border-radius:12px;
+    padding:14px 18px;font-size:13px;color:var(--text);text-align:left;
+    max-width:360px;width:100%;word-break:break-all;box-shadow:0 1px 3px rgba(0,0,0,.06);
+  }
+  .done-box div{margin-bottom:5px}
+  .done-box div:last-child{margin-bottom:0}
+  .done-box .k{color:var(--sub);margin-right:6px}
+  .done-ok{color:var(--ok);font-weight:600}
+
+  @media (min-width:900px){
+    .nav{
+      position:fixed;top:50%;transform:translateY(-50%);z-index:25;
+      width:34px;height:34px;border-radius:50%;background:#fff;border:1px solid var(--line);
+      box-shadow:0 1px 4px rgba(0,0,0,.1);cursor:pointer;font-size:16px;color:#5a6068;
+      display:flex;align-items:center;justify-content:center;user-select:none;
+    }
+    .nav.l{left:calc(50% - 470px)}
+    .nav.r{right:calc(50% - 470px)}
+    .nav.off{opacity:.25;cursor:default}
+  }
+  @media (max-width:899px){ .nav{display:none} }
+</style>
+</head>
+<body>
+
+<div id="boot" class="mask"><div>正在打开…</div></div>
+
+<div id="app" style="display:none">
+  <div class="top">
+    <div class="inner">
+      <div class="hd">
+        <h1>手动查数</h1>
+        <span class="who" id="who"></span>
+      </div>
+      <div class="tabs" id="tabs"></div>
+    </div>
+  </div>
+  <div class="nav l" id="navL">‹</div>
+  <div class="nav r" id="navR">›</div>
+  <div class="deck" id="deck"></div>
+
+  <div class="bar">
+    <div class="tip" id="tip" style="display:none"></div>
+    <div class="inner">
+      <button class="btn" id="reset">重置</button>
+      <button class="btn pri" id="submit">提交查询</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var BASE = "/api/frontend_plugin/qdm-query-card/files/";
+  var API = "/api/qdm-query-card";
+  var _qs = new URLSearchParams(location.search);
+  var token = _qs.get("t") || "";
+  // 一步跳转模式：按钮直接跳过来时只有 task，没有 token，
+  // 要用它去后端换（后端按「最近一次点按钮的人」判定是不是本人）。
+  var task = _qs.get("task") || "";
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+    });
+  };
+
+  var RAW = null, MG = null, M = {}, DIM = {}, DIMG = {};
+  var GROUPS = [];                 // [{code,name,icon,metrics:[...]}]
+  var GROUP_NAMES = {
+    store: "门店", dc: "仓配", sku: "商品", purchaseDepartment: "采购",
+    salesBusiness: "销售业务", cmrStoreScope: "CMR 门店", time: "时间"
+  };
+  var GIDX = {};                   // code -> index
+  var st = { active: "", cards: {}, filters: {} };
+  var authInfo = null;
+  var bootstrap = null, guardInfo = null, selfWho = "";
+  var fCurDim = "", fTimer = null, fLastItems = [];
+  var METRIC_CAP = 100;            // 每卡片指标默认渲染上限（可展开）
+  var expanded = {};               // gid -> 是否已展开全部
+
+  // ---------------------------------------------------------------- 工具
+  function fail(title, detail) {
+    $("boot").style.display = "flex";
+    $("boot").innerHTML = "<b>" + esc(title) + "</b><div>" + esc(detail) + "</div>";
+  }
+
+  function showDone(summary, jobId, note) {
+    var box = '<div class="done-box">' +
+      '<div><span class="k">条件</span>' + esc(summary || "见企微会话") + "</div>" +
+      (jobId ? '<div><span class="k">单号</span>' + esc(jobId) + "</div>" : "") +
+      '<div class="done-ok">✓ 查询已受理</div>' +
+      '<div style="color:var(--sub);font-size:12.5px">' +
+      esc(note || "回到企微会话即可看到查询结果。") + "</div></div>";
+    document.body.innerHTML = '<div class="mask"><b>已提交</b>' + box + "</div>";
+  }
+
+  function today(delta) {
+    var d = new Date();
+    d.setDate(d.getDate() + (delta || 0));
+    return d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+  }
+
+  // ---------------------------------------------------------------- 分组
+  // 分组完全由 metricGroups.json 驱动：按 groups 顺序，keywords 对指标中文名
+  // 做包含匹配，首个命中即入组，都命中不了进 fallback。改配置即改分组。
+  function buildGroups() {
+    var defs = (MG.groups || []).slice();
+    var fb = MG.fallback || { code: "other", name: "其他", icon: "🧩" };
+    GROUPS = defs.map(function (g) {
+      return { code: g.code, name: g.name, icon: g.icon || "", metrics: [] };
+    });
+    var fbG = { code: fb.code, name: fb.name, icon: fb.icon || "", metrics: [] };
+    var byCode = {};
+    GROUPS.forEach(function (g) { byCode[g.code] = g; });
+    byCode[fb.code] = fbG;
+    RAW.metrics.forEach(function (m) {
+      var hit = null;
+      for (var i = 0; i < defs.length && !hit; i++) {
+        var kws = defs[i].keywords || [];
+        for (var j = 0; j < kws.length; j++) {
+          if (m.name.indexOf(kws[j]) >= 0) { hit = defs[i].code; break; }
+        }
+      }
+      (byCode[hit || fb.code]).metrics.push(m);
+    });
+    if (fbG.metrics.length) GROUPS.push(fbG);
+    // 展示顺序可独立于匹配顺序（displayOrder），让最常用的分组排第一张卡
+    var order = MG.displayOrder || [];
+    if (order.length) {
+      var rank = {};
+      order.forEach(function (code, i) { rank[code] = i; });
+      GROUPS.sort(function (a, b) {
+        return (rank.hasOwnProperty(a.code) ? rank[a.code] : 99) -
+               (rank.hasOwnProperty(b.code) ? rank[b.code] : 99);
+      });
+    }
+    GROUPS.forEach(function (g, i) {
+      GIDX[g.code] = i;
+      g.metrics.sort(function (a, b) { return a.name.localeCompare(b.name, "zh-Hans-CN"); });
+    });
+  }
+
+  // ---------------------------------------------------------------- 卡片状态
+  // 每张卡片独立保存「指标 + 维度」；时间/粒度/对比/口径首次进入时从上一张
+  // 卡片继承（用户通常不改），之后各卡独立；过滤是全局共享的。
+  // 提交严格以当前卡片为准（见 submit）。
+  function newCard(from) {
+    return {
+      metrics: [], dims: [],
+      range: { start: from ? from.range.start : today(-1), end: from ? from.range.end : today(-1) },
+      grain: from ? from.grain : (RAW.grains[0] || {}).code,
+      policy: from ? from.policy : (RAW.policies[0] || {}).code,
+      compare: { yoy: from ? !!from.compare.yoy : false, mom: from ? !!from.compare.mom : false }
+    };
+  }
+  function card(gid) {
+    if (!st.cards[gid]) {
+      st.cards[gid] = newCard(st.cards[st.active] || null);
+    }
+    return st.cards[gid];
+  }
+
+  // ---------------------------------------------------------------- 规则裁剪
+  function allowedDims(c) {
+    if (!c.metrics.length) return [];
+    var acc = null;
+    c.metrics.forEach(function (code) {
+      var caps = (M[code] || {}).caps || {};
+      var arr = caps[c.policy] || [], set = {};
+      arr.forEach(function (x) { set[x] = 1; });
+      if (acc === null) { acc = set; return; }
+      var next = {};
+      Object.keys(acc).forEach(function (k) { if (set[k]) next[k] = 1; });
+      acc = next;
+    });
+    return acc ? Object.keys(acc) : [];
+  }
+
+  function availablePolicies(c) {
+    if (!c.metrics.length) return RAW.policies.map(function (p) { return p.code; });
+    var acc = null;
+    c.metrics.forEach(function (code) {
+      var ps = (M[code] || {}).policies || [], set = {};
+      ps.forEach(function (x) { set[x] = 1; });
+      if (acc === null) { acc = set; return; }
+      var next = {};
+      Object.keys(acc).forEach(function (k) { if (set[k]) next[k] = 1; });
+      acc = next;
+    });
+    return Object.keys(acc || {});
+  }
+
+  // ---------------------------------------------------------------- 渲染：① 共享区
+  // 权限区三种状态必须分开说清楚：以前「查得到账号但没有维度授权」被误报成
+  // 「权限服务不可用」，用户以为是故障。另外群聊要明示「本次用谁的权限」。
+  function authBlock(c) {
+    var lines = [];
+    if (guardInfo && guardInfo.applies && guardInfo.owner) {
+      var own = guardInfo.owner.name || guardInfo.owner.loginId || "未知同事";
+      lines.push('<div class="aown">本次查询将以 <b>' + esc(own) +
+        "</b> 的数据权限执行，结果会发到群里；若你不是本人，请在群里自己发送触发词。</div>");
+    }
+    if (authInfo && authInfo.available && (authInfo.dims || []).length) {
+      lines.push('<div class="at">我的数据权限（查询时服务端自动求交）</div>');
+      lines.push(authInfo.dims.map(function (d) {
+        return '<div class="ar"><span class="an">' + esc(d.name) + "：</span>" +
+          '<span class="av">' + esc((d.values || []).join("、")) + "</span></div>";
+      }).join(""));
+    } else if (authInfo && authInfo.available && !authInfo.found) {
+      lines.push('<div class="aoff">权限系统还没有 <b>' +
+        esc(authInfo.loginId || "当前账号") +
+        "</b> 的授权记录（" + esc(authInfo.reason || "未登记") +
+        "），不影响提交，服务端会按最小范围返回。</div>");
+    } else if (authInfo && authInfo.available) {
+      lines.push('<div class="aoff">已读到账号 <b>' +
+        esc(authInfo.userName || authInfo.loginId || "") +
+        "</b>，当前没有维度级授权项，查询按全量可见范围执行。</div>");
+    } else if (authInfo) {
+      lines.push('<div class="aoff">数据权限暂时读不出来（' +
+        esc(authInfo.reason || "权限服务不可用") +
+        "），不影响查询，服务端仍会自动求交。</div>");
+    }
+    return lines.length ? '<div class="auth">' + lines.join("") + "</div>" : "";
+  }
+
+  function renderShared() {
+    GROUPS.forEach(function (g) {
+      var c = card(g.code);   // 未访问过的分组在此初始化（继承当前卡）
+      var el = $("sb1-" + g.code);
+      if (!el) return;
+      var avail = availablePolicies(c);
+      var html = authBlock(c) +
+        '<div class="fld"><span class="lb">开始</span>' +
+        '<input type="date" data-a="d1" data-g="' + g.code + '" value="' + esc(c.range.start) + '">' +
+        '<span class="lb">结束</span>' +
+        '<input type="date" data-a="d2" data-g="' + g.code + '" value="' + esc(c.range.end) + '"></div>' +
+        '<div class="fld"><span class="lb">粒度</span><div class="segs">' +
+        RAW.grains.map(function (gr) {
+          return '<span class="seg' + (c.grain === gr.code ? " on" : "") +
+            '" data-a="grain" data-g="' + g.code + '" data-v="' + gr.code + '">' + esc(gr.name) + "</span>";
+        }).join("") + "</div></div>" +
+        '<div class="fld"><span class="lb">对比</span>' +
+        '<label class="sw"><input type="checkbox" data-a="cmp" data-g="' + g.code +
+        '" data-v="yoy"' + (c.compare.yoy ? " checked" : "") + ">同比</label>" +
+        '<label class="sw"><input type="checkbox" data-a="cmp" data-g="' + g.code +
+        '" data-v="mom"' + (c.compare.mom ? " checked" : "") + ">环比</label></div>" +
+        '<div class="fld"><span class="lb">口径</span><div class="segs">' +
+        RAW.policies.map(function (p) {
+          var usable = avail.indexOf(p.code) >= 0;
+          return '<span class="seg' + (c.policy === p.code ? " on" : "") + (usable ? "" : " dis") +
+            '" data-a="policy" data-g="' + g.code + '" data-v="' + p.code + '">' + esc(p.name) + "</span>";
+        }).join("") + "</div></div>";
+      el.innerHTML = html;
+      renderFilterInto(g.code, c);
+    });
+  }
+
+  // ---------------------------------------------------------------- 渲染：② 指标
+  // 搜索框是**静态**的（在 buildDeck 里一次性生成），这里只重画下面的结果区。
+  // 之前把 input 一起重建：每敲一个字 DOM 就被替换，焦点/光标/输入法候选全丢，
+  // 在企微内置浏览器里表现为「打不进字」。
+  function renderMetrics(gid) {
+    var c = card(gid), g = GROUPS[GIDX[gid]];
+    var el = $("mg-" + gid);
+    if (!el) return;
+    var input = $("ms-" + gid);
+    var kw = (input ? input.value : "").trim().toLowerCase();
+    var hit = g.metrics.filter(function (m) {
+      if (!kw) return true;
+      return m.name.toLowerCase().indexOf(kw) >= 0 || m.code.toLowerCase().indexOf(kw) >= 0;
+    });
+    var all = expanded[gid] || !!kw;
+    var shown = all ? hit : hit.slice(0, METRIC_CAP);
+    var html = "";
+    if (!shown.length) {
+      html = '<div class="empty">本组没有匹配的指标，可切换到其他分组查找</div>';
+    } else {
+      html = '<div class="mgrid">' + shown.map(function (m) {
+        return '<div class="chip' + (c.metrics.indexOf(m.code) >= 0 ? " on" : "") +
+          '" data-a="metric" data-g="' + gid + '" data-v="' + esc(m.code) +
+          '" title="' + esc(m.name + " · " + m.code) + '"><span class="n">' +
+          esc(m.name) + '</span><span class="c">' + esc(m.code) + "</span></div>";
+      }).join("") + "</div>";
+      if (!all && hit.length > METRIC_CAP) {
+        html += '<div class="more" data-a="more" data-g="' + gid + '">显示全部 ' +
+          hit.length + " 个指标 ↓</div>";
+      } else if (all && !kw && hit.length > METRIC_CAP) {
+        html += '<div class="more" data-a="less" data-g="' + gid + '">收起 ↑</div>';
+      } else if (!all) {
+        html += '<div class="hint">本组共 ' + hit.length + " 个指标</div>";
+      }
+    }
+    el.innerHTML = html;
+    var cnt = $("cntm2-" + gid);
+    if (cnt) cnt.textContent = c.metrics.length ? "已选 " + c.metrics.length : "";
+    var cc = $("cc-" + gid);
+    if (cc) cc.textContent = c.metrics.length ? "已选 " + c.metrics.length + " 个指标" : "";
+  }
+
+  function clearMetricSearch(gid) {
+    var input = $("ms-" + gid);
+    if (input) { input.value = ""; renderMetrics(gid); input.focus(); }
+  }
+
+  // ---------------------------------------------------------------- 渲染：③ 维度
+  function renderDims(gid) {
+    var c = card(gid), el = $("sb3-" + gid);
+    var ok = allowedDims(c);
+    c.dims = c.dims.filter(function (d) { return ok.indexOf(d) >= 0; });
+    var byGroup = {};
+    ok.forEach(function (code) {
+      var g = (DIM[code] || {}).group || "other";
+      (byGroup[g] || (byGroup[g] = [])).push(code);
+    });
+    var html = "";
+    if (!c.metrics.length) {
+      html = '<div class="empty">请先在本组选择指标，可用维度会随指标自动裁剪</div>';
+    } else {
+      Object.keys(byGroup).sort().forEach(function (g) {
+        html += '<div class="dgrp">' + esc(DIMG[g] || g) + "</div>" +
+          '<div class="dims">' + byGroup[g].map(function (code) {
+            return '<span class="dchip' + (c.dims.indexOf(code) >= 0 ? " on" : "") +
+              '" data-a="dim" data-g="' + gid + '" data-v="' + esc(code) + '">' +
+              esc((DIM[code] || {}).name || code) + "</span>";
+          }).join("") + "</div>";
+      });
+      if (!ok.length) html = '<div class="empty">所选指标没有共同支持的维度</div>';
+    }
+    el.innerHTML = html;
+    var cnt = $("cntd-" + gid);
+    if (cnt) cnt.textContent = c.dims.length ? "已选 " + c.dims.length : "";
+    var hint = $("dh-" + gid);
+    if (hint) {
+      hint.textContent = c.metrics.length > 1
+        ? "多选指标时只显示它们共同支持的维度（取交集）；维度选择只属于本组。"
+        : (c.metrics.length ? "可用维度随所选指标与口径自动裁剪。" : "");
+    }
+  }
+
+  // ---------------------------------------------------------------- 渲染：④ 过滤（全局共享）
+  function filterDims() {
+    return RAW.dimensions.filter(function (d) { return (d.group || "") !== "time"; });
+  }
+
+  function renderFilterInto(gid, c) {
+    var el = $("sb4-" + gid);
+    if (!el) return;
+    var html = '<div class="fld"><span class="lb">维度</span><select data-a="fdim" data-g="' + gid + '">' +
+      filterDims().map(function (d) {
+        return '<option value="' + esc(d.code) + '"' + (fCurDim === d.code ? " selected" : "") + ">" +
+          esc((d.name || d.code) + "（" + d.code + "）") + "</option>";
+      }).join("") + "</select></div>" +
+      '<div class="fld"><span class="lb">搜索值</span>' +
+      '<input type="search" id="fs-' + gid + '" data-a="fsearch" data-g="' + gid +
+      '" placeholder="输入关键词搜索，如门店名、区域名…"></div>' +
+      '<div class="flist" id="fl-' + gid + '"></div>' +
+      '<div class="tags" id="ft-' + gid + '"></div>' +
+      '<div class="hint">按维度筛选数据范围（全局共享，切换分组不会丢失）。' +
+      '选中值只收窄结果，不会越过你的数据权限。</div>';
+    el.innerHTML = html;
+    renderFList(gid);
+    renderFTags(gid);
+  }
+
+  function renderFList(gid, items, note) {
+    var el = $("fl-" + gid);
+    if (!el) return;
+    if (items) fLastItems = items; else items = fLastItems;
+    var sel = st.filters[fCurDim] || [], ids = {};
+    sel.forEach(function (v) { ids[v.id] = 1; });
+    el.innerHTML = ((items && items.length) ? items : [{ empty: note || "输入关键词后搜索" }]).map(function (v) {
+      if (v.empty) return '<div class="li"><span class="n">' + esc(v.empty) + "</span></div>";
+      return '<div class="li' + (ids[v.id] ? " on" : "") + '" data-a="fval" data-g="' + gid +
+        '" data-id="' + esc(v.id) + '" data-name="' + esc(v.name) + '"><span class="n">' +
+        esc(v.name) + '</span><span class="c">' + esc(v.id) + "</span></div>";
+    }).join("");
+  }
+
+  function renderFTags(gid) {
+    var el = $("ft-" + gid);
+    if (!el) return;
+    var html = "", total = 0;
+    Object.keys(st.filters).forEach(function (code) {
+      var arr = st.filters[code] || [];
+      if (!arr.length) return;
+      total += arr.length;
+      var dn = (DIM[code] || {}).name || code;
+      arr.forEach(function (v) {
+        html += '<span class="tag">' + esc(dn + ": " + v.name) +
+          '<b data-a="fdel" data-g="' + gid + '" data-c="' + esc(code) +
+          '" data-id="' + esc(v.id) + '">&times;</b></span>';
+      });
+    });
+    el.innerHTML = html;
+    var cnt = $("cntf-" + gid);
+    if (cnt) cnt.textContent = total ? "已选 " + total : "";
+  }
+
+  function searchFValues(gid, kw) {
+    renderFList(gid, [], "搜索中…");
+    fetch(API + "/dim-values?t=" + encodeURIComponent(token) +
+        "&code=" + encodeURIComponent(fCurDim) +
+        "&keyword=" + encodeURIComponent(kw) + "&limit=30")
+      .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (o) {
+        if (o.s === 200 && o.j.ok) {
+          renderFList(gid, o.j.items, o.j.items && o.j.items.length ? null : "无匹配结果");
+        } else {
+          renderFList(gid, [], (o.j && o.j.error) || ("搜索失败 HTTP " + o.s));
+        }
+      })
+      .catch(function (e) { renderFList(gid, [], "网络错误：" + e); });
+  }
+
+  // ---------------------------------------------------------------- 卡片切换
+  function renderTabs() {
+    var html = GROUPS.map(function (g) {
+      var n = (st.cards[g.code] && st.cards[g.code].metrics.length) || 0;
+      return '<span class="tab' + (st.active === g.code ? " on" : "") + '" data-a="tab" data-v="' +
+        esc(g.code) + '">' + esc(g.icon + " " + g.name) +
+        '<span class="tn">' + g.metrics.length + (n ? " · 选" + n : "") + "</span></span>";
+    }).join("");
+    $("tabs").innerHTML = html;
+    var on = $("tabs").querySelector(".tab.on");
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: "nearest", inline: "center" });
+  }
+
+  function goGroup(gid, silent) {
+    if (!GIDX.hasOwnProperty(gid)) return;
+    // 先取旧卡再切 active：新卡首次进入时继承旧卡的时间/粒度/口径/对比
+    var prev = st.cards[st.active];
+    st.active = gid;
+    if (!st.cards[gid]) st.cards[gid] = newCard(prev || null);
+    var i = GIDX[gid], deck = $("deck");
+    var w = deck.clientWidth, step = deck.firstElementChild ? deck.firstElementChild.offsetWidth + 14 : w;
+    if (!silent) deck.scrollTo({ left: i * step, behavior: "smooth" });
+    renderTabs();
+    renderMetrics(gid);
+    renderDims(gid);
+    renderShared();
+    updateTip();
+    $("navL").className = "nav l" + (i === 0 ? " off" : "");
+    $("navR").className = "nav r" + (i === GROUPS.length - 1 ? " off" : "");
+  }
+
+  function syncActiveFromScroll() {
+    var deck = $("deck"), card = deck.firstElementChild;
+    if (!card) return;
+    var step = card.offsetWidth + 14;
+    var i = Math.round(deck.scrollLeft / step);
+    if (i < 0) i = 0;
+    if (i >= GROUPS.length) i = GROUPS.length - 1;
+    var gid = GROUPS[i].code;
+    if (gid !== st.active) goGroup(gid, true);
+  }
+
+  function updateTip() {
+    var others = 0;
+    GROUPS.forEach(function (g) {
+      if (g.code !== st.active && st.cards[g.code]) others += st.cards[g.code].metrics.length;
+    });
+    var el = $("tip");
+    if (others) {
+      el.style.display = "block";
+      el.textContent = "其它分组还选了 " + others + " 个指标，本次只提交当前分组（“" +
+        GROUPS[GIDX[st.active]].name + "”）";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  // ---------------------------------------------------------------- 事件（委托）
+  function onDeckClick(ev) {
+    var t = ev.target;
+    while (t && t !== ev.currentTarget && !t.getAttribute("data-a")) t = t.parentNode;
+    if (!t || !t.getAttribute) return;
+    var a = t.getAttribute("data-a");
+    if (!a) return;
+    var gid = t.getAttribute("data-g") || st.active;
+    var c = card(gid), v = t.getAttribute("data-v");
+
+    if (a === "metric") {
+      var i = c.metrics.indexOf(v);
+      if (i >= 0) c.metrics.splice(i, 1); else c.metrics.push(v);
+      var avail = availablePolicies(c);
+      if (avail.indexOf(c.policy) < 0) c.policy = avail[0] || "";
+      renderShared();
+      renderMetrics(gid);
+      renderDims(gid);
+      renderTabs();
+      updateTip();
+    } else if (a === "more") {
+      expanded[gid] = true; renderMetrics(gid);
+    } else if (a === "less") {
+      expanded[gid] = false; renderMetrics(gid);
+    } else if (a === "mclear") {
+      clearMetricSearch(gid);
+    } else if (a === "dim") {
+      var j = c.dims.indexOf(v);
+      if (j >= 0) c.dims.splice(j, 1); else c.dims.push(v);
+      renderDims(gid);
+    } else if (a === "grain") {
+      c.grain = v; renderShared();
+    } else if (a === "policy") {
+      if (availablePolicies(c).indexOf(v) < 0) return;
+      c.policy = v; renderShared(); renderDims(gid);
+    } else if (a === "fval") {
+      var val = { id: t.getAttribute("data-id"), name: t.getAttribute("data-name") };
+      var arr = st.filters[fCurDim] || (st.filters[fCurDim] = []);
+      for (var k = 0; k < arr.length; k++) {
+        if (arr[k].id === val.id) { arr.splice(k, 1); renderFList(st.active, null); renderAllTags(); return; }
+      }
+      arr.push(val);
+      renderFList(st.active, null);
+      renderAllTags();
+    } else if (a === "fdel") {
+      var code = t.getAttribute("data-c"), id = t.getAttribute("data-id");
+      st.filters[code] = (st.filters[code] || []).filter(function (x) { return x.id !== id; });
+      renderFList(st.active, null);
+      renderAllTags();
+    } else if (a === "tab") {
+      goGroup(v);
+    }
+  }
+
+  function onDeckChange(ev) {
+    var t = ev.target, a = t.getAttribute && t.getAttribute("data-a");
+    if (!a) return;
+    var gid = t.getAttribute("data-g") || st.active, c = card(gid);
+    if (a === "d1") { c.range.start = t.value; renderShared(); }
+    else if (a === "d2") { c.range.end = t.value; renderShared(); }
+    else if (a === "cmp") {
+      var v = t.getAttribute("data-v");
+      c.compare[v] = t.checked;
+      renderShared();
+    } else if (a === "fdim") {
+      fCurDim = t.value;
+      fLastItems = [];
+      GROUPS.forEach(function (g) { renderFilterInto(g.code); });
+    }
+  }
+
+  function onDeckInput(ev) {
+    var t = ev.target, a = t.getAttribute && t.getAttribute("data-a");
+    if (a === "msearch") {
+      // 输入即时过滤（不重建输入框，焦点不丢）
+      var gid = t.getAttribute("data-g") || st.active;
+      renderMetrics(gid);
+      return;
+    }
+    if (a !== "fsearch") return;
+    var gid = t.getAttribute("data-g") || st.active, v = t.value.trim();
+    if (fTimer) clearTimeout(fTimer);
+    fTimer = setTimeout(function () {
+      if (!v) { renderFList(st.active, []); return; }
+      searchFValues(gid, v);
+    }, 400);
+  }
+
+  function renderAllTags() {
+    GROUPS.forEach(function (g) { renderFTags(g.code); });
+  }
+
+  // ---------------------------------------------------------------- 提交
+  function reset() {
+    var gid = st.active;
+    st.cards[gid] = newCard(null);
+    st.cards[gid].policy = (RAW.policies[0] || {}).code;
+    st.filters = {};
+    fLastItems = [];
+    expanded[gid] = false;
+    renderShared();
+    renderMetrics(gid);
+    renderDims(gid);
+    renderTabs();
+    updateTip();
+  }
+
+  function submit() {
+    var gid = st.active, c = card(gid);
+    if (!c.metrics.length) { alert("请至少在本组选择一个指标"); return; }
+    if (!c.range.start || !c.range.end) { alert("请选择查询时间范围"); return; }
+    var btn = $("submit");
+    btn.disabled = true;
+    btn.textContent = "提交中…";
+    var polName = "";
+    RAW.policies.forEach(function (p) { if (p.code === c.policy) polName = p.name; });
+    var filters = [];
+    Object.keys(st.filters).forEach(function (code) {
+      var arr = st.filters[code];
+      if (arr && arr.length) filters.push({ code: code, name: (DIM[code] || {}).name || code, values: arr });
+    });
+    fetch(API + "/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        t: token,
+        o: openerId(),
+        w: selfWho,
+        range: { start: c.range.start, end: c.range.end, grain: c.grain },
+        policy: c.policy,
+        policyName: polName,
+        metrics: c.metrics.map(function (code) { return { code: code, name: (M[code] || {}).name || code }; }),
+        dims: c.dims.map(function (code) { return { code: code, name: (DIM[code] || {}).name || code }; }),
+        filters: filters,
+        compare: { yoy: !!c.compare.yoy, mom: !!c.compare.mom }
+      })
+    }).then(function (r) {
+      return r.json().then(function (j) { return { s: r.status, j: j }; });
+    }).then(function (o) {
+      if (o.s === 200 && o.j.ok) {
+        showDone(o.j.summary, o.j.job_id, o.j.message);
+        return;
+      }
+      btn.disabled = false;
+      btn.textContent = "提交查询";
+      var err = (o.j && o.j.error) || ("HTTP " + o.s);
+      if (o.j && o.j.blocked) {
+        btn.disabled = false;
+        btn.textContent = "提交查询";
+        showGate("无权提交", (o.j && o.j.error) || "这个面板归属他人。");
+        return;
+      }
+      if (o.s === 409 || err === "already used") {
+        showDone("", "", (o.j && o.j.message) || "这个链接已经提交过一次查询，请回企微会话查看结果。");
+        return;
+      }
+      alert("提交失败：" + err);
+    }).catch(function (e) {
+      btn.disabled = false;
+      btn.textContent = "提交查询";
+      alert("网络错误：" + e);
+    });
+  }
+
+  // ---------------------------------------------------------------- 启动
+  function buildDeck() {
+    var html = GROUPS.map(function (g) {
+      return '<section class="card" id="card-' + g.code + '" data-g="' + g.code + '">' +
+        '<div class="c-hd"><span class="ci">' + esc(g.icon) + '</span><span class="cn">' +
+        esc(g.name) + '</span><span class="cc" id="cc-' + g.code + '"></span></div>' +
+        '<div class="sec"><div class="st"><span class="sn">1</span>权限 · 时间 · 统计口径</div>' +
+        '<div class="sb" id="sb1-' + g.code + '"></div></div>' +
+        '<div class="sec"><div class="st"><span class="sn">2</span>指标<span class="sc" id="cntm2-' +
+        g.code + '"></span></div>' +
+        '<div class="mbar">' +
+          '<input type="search" id="ms-' + g.code + '" data-a="msearch" data-g="' + g.code +
+          '" placeholder="在本组搜索指标名称或编码…" autocomplete="off">' +
+          '<span class="mclear" data-a="mclear" data-g="' + g.code + '">&times;</span>' +
+        '</div>' +
+        '<div class="sb" id="mg-' + g.code + '"></div></div>' +
+        '<div class="sec"><div class="st"><span class="sn">3</span>维度<span class="sc" id="cntd-' +
+        g.code + '"></span></div><div class="sb" id="sb3-' + g.code +
+        '"></div><div class="hint" id="dh-' + g.code + '" style="padding:0 16px 12px"></div></div>' +
+        '<div class="sec"><div class="st"><span class="sn">4</span>过滤（可选）<span class="sc" id="cntf-' +
+        g.code + '"></span></div><div class="sb" id="sb4-' + g.code + '"></div></div>' +
+        "</section>";
+    }).join("");
+    $("deck").innerHTML = html;
+  }
+
+  function boot() {
+    st.active = GROUPS[0].code;
+    fCurDim = (filterDims()[0] || {}).code || "";
+    buildDeck();
+    st.cards[st.active] = newCard(null);
+    renderTabs();
+    renderShared();
+    renderMetrics(st.active);
+    renderDims(st.active);
+    updateTip();
+    $("navL").className = "nav l off";
+    $("navR").className = "nav r" + (GROUPS.length > 1 ? "" : " off");
+
+    var deck = $("deck");
+    deck.addEventListener("click", onDeckClick);
+    deck.addEventListener("change", onDeckChange);
+    deck.addEventListener("input", onDeckInput);
+    var stimer = null;
+    deck.addEventListener("scroll", function () {
+      if (stimer) clearTimeout(stimer);
+      stimer = setTimeout(syncActiveFromScroll, 120);
+    }, { passive: true });
+    $("tabs").addEventListener("click", function (ev) {
+      var t = ev.target;
+      while (t && t !== this && !t.getAttribute("data-a")) t = t.parentNode;
+      if (t && t.getAttribute && t.getAttribute("data-a") === "tab") goGroup(t.getAttribute("data-v"));
+    });
+    $("navL").addEventListener("click", function () {
+      var i = GIDX[st.active];
+      if (i > 0) goGroup(GROUPS[i - 1].code);
+    });
+    $("navR").addEventListener("click", function () {
+      var i = GIDX[st.active];
+      if (i < GROUPS.length - 1) goGroup(GROUPS[i + 1].code);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test((e.target.tagName || ""))) return;
+      var i = GIDX[st.active];
+      if (e.key === "ArrowLeft" && i > 0) goGroup(GROUPS[i - 1].code);
+      if (e.key === "ArrowRight" && i < GROUPS.length - 1) goGroup(GROUPS[i + 1].code);
+    });
+    $("reset").addEventListener("click", reset);
+    $("submit").addEventListener("click", submit);
+  }
+
+  // ---------------------------------------------------------------- 群聊面板防护
+  // 企微卡片是纯跳转 URL，点开拿不到点击者身份，所以服务端用「浏览器句柄 +
+  // 首开认领 / 自报账号」做弱约束。这里负责：带上句柄、按 code 显示友好页。
+  function openerId() {
+    try {
+      var k = "qqc_opener", v = localStorage.getItem(k);
+      if (!v) {
+        v = "o-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem(k, v);
+      }
+      return v;
+    } catch (e) { return ""; }
+  }
+
+  function showGate(title, detail, unlock) {
+    var el = $("boot");
+    el.style.display = "flex";
+    var extra = unlock
+      ? '<input id="whoIn" type="text" autocomplete="off"' +
+        ' placeholder="本人换设备？输入你的企微账号即可解锁">' +
+        '<button id="whoBtn" class="btn pri">本人解锁</button>'
+      : "";
+    el.innerHTML = '<div class="gate"><span class="gi">🔒</span><b>' + esc(title) +
+      "</b><div>" + esc(detail) +
+      '</div>' + extra +
+      '<div class="gh">也可以回到会话里自己发送触发词，机器人会给只属于你的面板。</div></div>';
+    if (!unlock) return;
+    var inp = $("whoIn"), btn = $("whoBtn");
+    function go() {
+      var v = (inp.value || "").trim();
+      if (!v) { inp.focus(); return; }
+      btn.disabled = true; btn.textContent = "解锁中…";
+      start(v);
+    }
+    btn.addEventListener("click", go);
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+  }
+
+  function askWho(msg) {
+    var el = $("boot");
+    el.style.display = "flex";
+    el.innerHTML = '<div class="gate"><span class="gi">🪪</span><b>请确认身份</b><div>' +
+      esc(msg) + '</div><input id="whoIn" type="text" autocomplete="off"' +
+      ' placeholder="请输入你的企微账号，如 linjiahong2">' +
+      '<button id="whoBtn" class="btn pri">确认并使用</button>' +
+      '<div class="gh">面板的数据权限归发起者本人，他人输入也不会通过。</div></div>';
+    var inp = $("whoIn"), btn = $("whoBtn");
+    function go() {
+      var v = (inp.value || "").trim();
+      if (!v) { inp.focus(); return; }
+      btn.disabled = true; btn.textContent = "确认中…";
+      start(v);
+    }
+    btn.addEventListener("click", go);
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    inp.focus();
+  }
+
+  function start(who) {
+    selfWho = who || "";
+    fetch(API + "/bootstrap?t=" + encodeURIComponent(token) +
+        "&o=" + encodeURIComponent(openerId()) +
+        (selfWho ? "&w=" + encodeURIComponent(selfWho) : ""))
+      .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+      .then(function (o) {
+        if (o.s !== 200 || !o.j.ok) {
+          var code = (o.j && o.j.code) || "";
+          if (code === "who_required") { askWho((o.j && o.j.error) || "这是别人的查询面板。"); return; }
+          if (code === "claimed") {
+            showGate("这个面板不能给你用", (o.j && o.j.error) || "该面板归属他人。", true);
+            return;
+          }
+          if (code === "not_owner" || code === "no_opener") {
+            showGate("这个面板不能给你用", (o.j && o.j.error) || "该面板归属他人。");
+            return;
+          }
+          showGate("链接已失效", "请重新发送触发词获取新卡片。");
+          return;
+        }
+        bootstrap = o.j;
+        Promise.all([
+          fetch(BASE + "conditions.json"),
+          fetch(BASE + "metricGroups.json")
+        ]).then(function (rs) {
+          if (!rs[0].ok) throw { stage: "meta", code: rs[0].status };
+          return Promise.all([rs[0].json(), rs[1].ok ? rs[1].json() : null]);
+        }).then(function (pair) {
+          var cond = pair[0], mg = pair[1];
+          if (!cond || !cond.metrics) throw { stage: "meta", msg: "格式错误" };
+          if (!mg || !mg.groups) throw { stage: "meta", msg: "缺少指标分组配置 metricGroups.json" };
+          RAW = cond; MG = mg;
+          cond.metrics.forEach(function (m) { M[m.code] = m; });
+          cond.dimensions.forEach(function (d) { DIM[d.code] = d; });
+          Object.keys(cond.groups || {}).forEach(function (g) {
+            DIMG[g] = (cond.groups[g] || {}).name || GROUP_NAMES[g] || g;
+          });
+          authInfo = bootstrap.auth || null;
+          guardInfo = bootstrap.guard || null;
+          $("who").textContent = bootstrap.scope === "group" ? "群聊" : "私聊";
+          if (bootstrap.consumed) {
+            showDone("", "", "这个链接已经提交过一次查询，请回会话查看结果；需要再查请重新发送触发词。");
+            return;
+          }
+          buildGroups();
+          $("boot").style.display = "none";
+          $("app").style.display = "block";
+          boot();
+        }).catch(function (e) {
+          fail("打开失败", "无法加载查询条件：" + ((e && e.msg) || (e && e.code) || e));
+        });
+      })
+      .catch(function (e) { fail("打开失败", "网络错误：" + e); });
+  }
+
+  // ---------------------------------------------------------------- 一步跳转：task 换 token
+  var TOK_KEY = "qqc_tok_";
+  function cachedToken() {
+    try { return localStorage.getItem(TOK_KEY + task) || ""; } catch (e) { return ""; }
+  }
+  function saveToken(tk) {
+    try { localStorage.setItem(TOK_KEY + task, tk); } catch (e) { /* 无痕模式，忽略 */ }
+  }
+
+  function redeemTask() {
+    var cached = cachedToken();
+    if (cached) { token = cached; start(""); return; }
+
+    var el = $("boot");
+    el.style.display = "flex";
+    el.innerHTML = '<div class="gate"><span class="gi">🔒</span><b>正在确认身份…</b>' +
+      "<div>请稍候，正在核对这个面板是否属于你。</div></div>";
+
+    var tries = 0, MAX = 10;
+    function once() {
+      tries++;
+      fetch(API + "/redeem?task=" + encodeURIComponent(task) +
+          "&d=" + encodeURIComponent(openerId()))
+        .then(function (r) { return r.json().then(function (j) { return { s: r.status, j: j }; }); })
+        .then(function (o) {
+          var j = o.j || {};
+          if (j.ok && j.token) {
+            token = j.token; saveToken(j.token); start(""); return;
+          }
+          var code = j.code || "";
+          if (code === "pending") {
+            // 回调还没到（页面比回调快，或按钮没推回调）→ 再等等
+            if (tries < MAX) { setTimeout(once, 700); return; }
+            showGate("无法确认身份",
+              "没有收到按钮点击记录，请回到群里重新点一次卡片里的按钮。");
+            return;
+          }
+          if (code === "not_owner") {
+            showGate("这不是你的面板", j.error || "该面板归属他人。");
+            return;
+          }
+          showGate("面板已失效", j.error || "请重新发送触发词获取新卡片。");
+        })
+        .catch(function () {
+          if (tries < MAX) { setTimeout(once, 700); return; }
+          fail("打开失败", "网络错误，请稍后重试。");
+        });
+    }
+    once();
+  }
+
+  if (token) { start(""); return; }
+  if (task) { redeemTask(); return; }
+  fail("链接不完整", "缺少访问令牌，请重新发送触发词获取卡片。");
+})();
+</script>
+</body>
+</html>

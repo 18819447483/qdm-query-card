@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 后续会有的构建产物
+h5/node_modules/
+h5/dist/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+
+# 本地运行配置（含域名、端口、密钥，每个部署各自一份）
+# 复制 plugin/trigger.example.json 为 plugin/trigger.json 后自行填写
+plugin/trigger.json
+trigger.local.json
+
+# 一次性 token 的签名密钥（每个部署各自生成，绝不入库）
+plugin/.hmac_secret
