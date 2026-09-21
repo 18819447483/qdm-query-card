@@ -44,6 +44,8 @@
     "mode": "claim",
     "buttonDelivery": true,
     "buttonJump": false,
+    "instantDelivery": false,
+    "instantClosingText": "查数面板已就绪，请点击上方卡片打开（链接只有你能看到）。",
     "jumpRedeemMax": 6,
     "buttonText": "打开查数面板",
     "buttonTtlSec": 3600,

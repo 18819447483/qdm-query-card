@@ -155,6 +155,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # pending「无法确认身份」。也就是「一步打开」与「身份隔离」不可兼得。
         # 因此默认关闭；保持 False 时走两步（点按钮 → 卡片只给本人换成带链接卡）。
         "buttonJump": False,
+        # ⚠️ 实验项「一步交付」：卡发出去后立刻只给发起人换一张带链接卡，
+        # 让他点 1 次就进 H5（否则要「点按钮 → 再点卡片」两步）。
+        # 身份不用再靠按钮回调取 —— 群里 @机器人那帧本身就带 from.userid。
+        # 存疑点：aibot 的 update_template_card 只承诺在 template_card_event
+        # 的 5s 窗口内可用，对普通**入站消息帧**放不放行尚未验证。
+        # 失败会静默退回按钮交付（两步）—— 原卡不含链接，所以试错无风险。
+        "instantDelivery": False,
+        "instantClosingText": "查数面板已就绪，请点击上方卡片打开（链接只有你能看到）。",
         # 同一张面板最多换几次 token（换设备/刷新用）
         "jumpRedeemMax": 6,
         "buttonText": "打开查数面板",
@@ -986,6 +994,64 @@ def _notice_card(task_id: str, title: str, desc: str, url: str = "") -> dict:
     }
 
 
+def build_owner_link_card(
+    task_id: str,
+    token: str,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    """给本人看的「带链接」面板卡（text_notice，点卡任意位置即打开）。
+
+    这张卡只会在两个地方出现，**且都只有本人看得到**：
+      * 群聊按钮回调里替换给点击者（``_handle_panel_button``）
+      * 一步交付里替换给发起人（``deliver_card_to_owner_only``）
+
+    群里那张卡本体永远是不含链接的按钮卡，所以链接不会在群里扩散。
+    """
+    guard = cfg.get("groupGuard") or {}
+    card, _url = build_card(cfg, token)
+    card["task_id"] = task_id
+    lt = str(guard.get("linkCardTitle") or "").strip()
+    ld = str(guard.get("linkCardDesc") or "").strip()
+    mt = card.setdefault("main_title", {})
+    if lt:
+        mt["title"] = _truncate(lt, TITLE_MAX)
+    if ld:
+        mt["desc"] = _truncate(ld, DESC_MAX)
+    return card
+
+
+async def deliver_card_to_owner_only(
+    channels: list[Any],
+    frame: Any,
+    card: dict[str, Any],
+    owner: str,
+) -> tuple[bool, str]:
+    """差异化更新：只把 ``owner`` 看到的那张卡换掉，别人看到的还是原卡。
+
+    返回 ``(ok, reason)``。**失败一律当作"保留原卡"处理** —— 原卡是不含
+    链接的按钮卡，所以任何失败都只是退回两步，绝不会把链接漏到群里。
+    """
+    if not owner:
+        return False, "no owner userid"
+    last = "no usable channel"
+    for ch in channels:
+        client = getattr(ch, "_client", None)
+        fn = getattr(client, "update_template_card", None)
+        if not callable(fn):
+            last = f"{_label(ch)}: update_template_card unavailable"
+            continue
+        try:
+            res = await fn(frame, card, [owner])
+        except Exception as exc:  # noqa: BLE001 - 异常绝不能冒到发卡主链路
+            last = f"{_label(ch)}: {type(exc).__name__}: {exc}"[:300]
+            continue
+        ok, why = _check_reply(res)
+        if ok:
+            return True, f"ok via {_label(ch)}"
+        last = f"{_label(ch)}: {why}"
+    return False, last
+
+
 async def _handle_panel_button(frame: Any, task_id: str) -> None:
     """群聊按钮点击：只把**点击者**看到的那张卡换成结果。"""
     body = frame.get("body") or {} if isinstance(frame, dict) else {}
@@ -1006,18 +1072,10 @@ async def _handle_panel_button(frame: Any, task_id: str) -> None:
         card = _notice_card(task_id, "⌛ 面板已过期", "请重新发送触发词获取新面板")
         kind = "expired"
     elif userid and userid == owner:
-        # 本人：把带链接的面板卡给他（只他可见）。
-        # 这张卡是 text_notice 整卡跳转 —— 点卡片任意位置即可打开，比让他在
-        # 替换后的卡上再找一个小按钮更符合直觉（一步跳转实测不可行，见配置注释）。
-        card, _url = build_card(cfg, str(item.get("token") or ""))
-        card["task_id"] = task_id
-        lt = str(guard.get("linkCardTitle") or "").strip()
-        ld = str(guard.get("linkCardDesc") or "").strip()
-        mt = card.setdefault("main_title", {})
-        if lt:
-            mt["title"] = _truncate(lt, TITLE_MAX)
-        if ld:
-            mt["desc"] = _truncate(ld, DESC_MAX)
+        # 本人：把带链接的面板卡给他（只他可见）。这张卡是 text_notice 整卡
+        # 跳转 —— 点卡片任意位置即可打开，比让他在替换后的卡上再找一个小
+        # 按钮更符合直觉（一步跳转实测不可行，见配置注释）。
+        card = build_owner_link_card(task_id, str(item.get("token") or ""), cfg)
         kind = "owner"
     else:
         name = str(item.get("owner_name") or owner)
@@ -1036,23 +1094,14 @@ async def _handle_panel_button(frame: Any, task_id: str) -> None:
         )
         kind = "other"
 
-    for ch in cached_channels():
-        client = getattr(ch, "_client", None)
-        fn = getattr(client, "update_template_card", None)
-        if not callable(fn):
-            continue
-        try:
-            res = await fn(frame, card, [userid])
-            logger.info(
-                "%s panel button kind=%s task=%s user=%s owner=%s res=%s",
-                LOG_PREFIX, kind, task_id, userid, owner, _frame_brief(res),
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "%s panel button update failed task=%s", LOG_PREFIX, task_id
-            )
-        return
-    logger.warning("%s panel button: no usable channel", LOG_PREFIX)
+    upd_ok, upd_reason = await deliver_card_to_owner_only(
+        cached_channels(), frame, card, userid
+    )
+    logger.info(
+        "%s panel button kind=%s task=%s user=%s owner=%s %s reason=%s",
+        LOG_PREFIX, kind, task_id, userid, owner,
+        "UPDATED" if upd_ok else "FAILED", upd_reason[:300],
+    )
 
 
 def _issue_panel_token(item: dict[str, Any], owner: str, cfg: dict[str, Any]) -> str:
@@ -1698,6 +1747,38 @@ class QueryCardTriggerHook(HookBase):
             sid if absorb else "",
             stream_content=str(delivery.get("placeholder_closing_text") or ""),
         )
+
+        # ---- 一步交付（instantDelivery，实验项）--------------------------
+        # 卡片发出去后，立刻试着只把**发起人**看到的那张卡换成带链接的面板卡。
+        #   成功 → 他点 1 次就进 H5（群里依然没有链接）
+        #   失败 → 他看到的还是这张不含链接的按钮卡 → 退回两步
+        # 两种结果链接都没进群，所以这个开关可以放心开着试。
+        # 存疑点：aibot 的 update_template_card 文档只承诺在 template_card_event
+        # 的 5s 窗口内可用，对普通**入站消息帧**放不放行得靠真机验证。
+        instant = False
+        if ok and button_delivery and bool(guard.get("instantDelivery", False)):
+            try:
+                link_card = build_owner_link_card(task_id, token, cfg)
+                instant, why = await deliver_card_to_owner_only(
+                    channels, frame, link_card, owner_id
+                )
+                logger.info(
+                    "%s instant delivery %s task=%s owner=%s reason=%s",
+                    LOG_PREFIX,
+                    "OK" if instant else "FAILED",
+                    task_id,
+                    owner_id,
+                    str(why)[:300],
+                )
+            except Exception:  # noqa: BLE001 - 实验路径炸了也只是退回按钮卡
+                logger.exception(
+                    "%s instant delivery crashed task=%s", LOG_PREFIX, task_id
+                )
+        if instant:
+            delivery["placeholder_closing_text"] = str(
+                guard.get("instantClosingText")
+                or "查数面板已就绪，请点击上方卡片打开（链接只有你能看到）。"
+            )
 
         # 带 type/url 的按钮是企微的未文档化能力，服务端可能直接拒收。
         # 拒了就退回纯回调按钮，绝不能让用户收不到卡片。
