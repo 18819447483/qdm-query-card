@@ -159,7 +159,9 @@ CLI 自动探测顺序：配置 `cliPath` → 环境变量 `QDM_METRIC_CLI` → 
 | --- | --- |
 | `buttonDelivery` | `true` 时群聊只发按钮卡，**链接不出现在群里** |
 | `buttonJump` | ⚠️ **保持 `false`**。给按钮加 `type=1 + url` 能一步打开页面，但实测企微**不推回调**，服务端拿不到点击者身份，隔离会失效 |
-| `instantDelivery` | 🧪 实验项。卡片发出后立刻只给发起人换一张带链接卡 → **点 1 次**进 H5。失败自动退回两步，两种结果链接都没进群（见下节） |
+| `instantDelivery` | ❌ **已证伪，保持 `false`**。2026-09-21 真机：企微返回 `errcode=846606 request already responded, cannot respond again` —— 一个 `req_id` 只能响应一次，发卡已经用掉了它 |
+| `visibleToUser` | 🧪 实验项。回复时带 `visible_to_user=[发起人]`，只有他看得到这条消息（企微**应用消息** API 的字段，机器人 WS 未承诺支持）。单独开启**不含链接**，可安全验证可见性 |
+| `oneStep` | 🧪 实验项。直接发带链接的整卡跳转卡，点 1 次进 H5。**代码强制要求 `visibleToUser` 同时为真**，误配不会泄密；服务端不认字段则自动退回按钮卡 |
 | `mode` | `claim`（首开认领）/ `strict`（输入账号比对）/ `none`。按钮交付签发的 token 自带免认领标记，同一用户的手机与电脑互不干扰 |
 | `attachListener` | 卡片事件监听开关，正式链路依赖它，保持 `true` |
 
@@ -202,19 +204,47 @@ direct 模式的结果不进会话上下文，所以插件会缓存最近一次�
 
 第二步点的是**整张卡**（`text_notice` 整卡跳转），不是再找一个小按钮。私聊不受影响，一直是点开即用。
 
-### 一步交付（`instantDelivery`，实验项）
+### 一次尝试与它的结论：`instantDelivery` ❌
 
-上面第二步其实可以省：群里 @机器人那一刻，**入站消息帧本身就带着 `body.from.userid`**，身份不用靠按钮回调去取。所以只要在卡片发出后，立刻把**只有发起人看到的那张卡**换成带链接版本，他就点 1 次能进 H5，而群里那张卡本体始终没有链接。
+上面第二步本来可以省：群里 @机器人那一刻，**入站消息帧本身就带着 `body.from.userid`**，身份不用靠按钮回调去取。所以只要在卡片发出后，立刻把**只有发起人看到的那张卡**换成带链接版本，他就点 1 次能进 H5。
+
+协议层看着是通的 —— 读 SDK 源码可知 `update_template_card` 内部就是
+`reply(frame, body, RESPONSE_UPDATE)`，而 `reply` **只取 `frame["headers"]["req_id"]，
+完全不校验帧类型**，入站帧也有 `req_id`。
+
+但 2026-09-21 真机给出了终审：
 
 ```
-@机器人 触发 → 回复按钮卡（无链接，群里可见）→ 服务端立刻 update(userids=[发起人])
-             → 发起人看到的是带链接卡：点 1 次进 H5
-             → 群友看到的仍是那张按钮卡：什么都不用管
+errcode=846606, errmsg=request already responded, cannot respond again
 ```
 
-失败模式是**安全的**：一旦企微拒绝这次更新（`aibot` 的 `update_template_card` 文档只承诺在卡片事件的 5 秒窗口内可用，对普通消息帧放不放行需要真机验证），发起人看到的还是那张不含链接的按钮卡，也就是回到两步。任何情况下链接都不会出现在群里。
+**同一个 `req_id` 只允许响应一次**，发卡已经把它用掉了，没有第二次机会。所以这条路
+彻底关闭（代码保留只为留档，`instantDelivery` 恒 `false`）。
 
-日志关键字 `instant delivery OK / FAILED`，后面跟着 `errcode`，一眼能看出这条路通不通。
+### 现在的方向：`visibleToUser` + `oneStep` 🧪
+
+既然只有**一次**回复机会，差异化信息就必须塞进这唯一一次回复里 —— 也就是企微应用
+消息 API 的 `visible_to_user` 字段（只有列表里的人看得到这条消息）。它若成立，群聊
+就能真正一步：
+
+```
+@机器人 触发 → 回复带链接卡 + visible_to_user=[发起人]
+             → 发起人：看到卡片，点 1 次进 H5
+             → 群友：这条消息对他们根本不存在
+```
+
+⚠️ **必须按顺序验证**，因为字段有可能被服务端**静默忽略**（那样卡片就全员可见了）：
+
+1. 先只开 `visibleToUser: true`（`oneStep` 保持 `false`）→ 此时发的仍是**不含链接**的
+   按钮卡，让一位群友确认他是否看得到这条消息
+2. 群友确实看不到 → 再开 `oneStep: true` → 一步打开
+3. 群友仍看得到 → 字段无效，两个都关掉，维持两步
+
+这两个开关都在 `trigger.json`，**热加载**，不需要重启宿主。安全底线写在
+`pick_group_card` 里并有单测覆盖：`oneStep` 单独打开**永远不会**发出带链接的卡。
+
+日志关键字 `visible_to_user=[...] one_step=True/False`；若服务端不认该字段，
+会看到 `visible_to_user rejected / ack error ... fallback to plain card`，卡片照常发出。
 
 ---
 
@@ -278,7 +308,8 @@ direct 模式的结果不进会话上下文，所以插件会缓存最近一次�
 | `probe_test.py` | 卡片事件监听与回调处理（35 项） |
 | `platform_test.py` | 跨平台 CLI 探测与 token 兜底（14 项） |
 | `cooldown_test.py` | 提交冷却：完成后收缩、失败释放、按人不按会话、预检不占槽（20 项） |
-| `instant_delivery_test.py` | 一步交付：群里卡绝不含链接、只替换发起人、失败安全退回（23 项） |
+| `instant_delivery_test.py` | 一步交付：群里卡绝不含链接、只替换发起人、失败安全退回（23 项，路径已证伪，留档） |
+| `visible_delivery_test.py` | 定向可见 / 一步打开：误配绝不泄密、字段被拒自动退回、send_card 透传（31 项） |
 | `concurrency_test.py` | 并发压测（HTTP 层，需宿主在跑）：`--mode dry` 不查数，`--mode real` 真实并发提交 |
 | `h5_smoke.js` | H5 启动流程（normal / task / claimed / who_required 四种模式） |
 

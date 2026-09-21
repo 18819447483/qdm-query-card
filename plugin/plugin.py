@@ -158,11 +158,21 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # ⚠️ 实验项「一步交付」：卡发出去后立刻只给发起人换一张带链接卡，
         # 让他点 1 次就进 H5（否则要「点按钮 → 再点卡片」两步）。
         # 身份不用再靠按钮回调取 —— 群里 @机器人那帧本身就带 from.userid。
-        # 存疑点：aibot 的 update_template_card 只承诺在 template_card_event
-        # 的 5s 窗口内可用，对普通**入站消息帧**放不放行尚未验证。
-        # 失败会静默退回按钮交付（两步）—— 原卡不含链接，所以试错无风险。
+        # ⚠️ **已证伪（2026-09-21 真机）**，保留只为留档，别打开：
+        # 企微 errcode=846606 "request already responded, cannot respond again"
+        # —— 同一个 req_id 只能响应一次，发卡已经用掉了，没有第二次机会。
         "instantDelivery": False,
         "instantClosingText": "查数面板已就绪，请点击上方卡片打开（链接只有你能看到）。",
+        # 「定向可见」：回复消息时带 visible_to_user=[发起人]，只有他看得到这条。
+        # 企微**应用消息** API 的字段；智能机器人 WS 协议未承诺支持（aibot SDK
+        # 里零处引用）。若成立，群聊就能一步打开，不必再「点按钮 → 再点卡片」。
+        #   ⚠️ 验证顺序：先开这一个（卡片仍是**不含链接**的按钮卡），肉眼确认
+        #   群里其他人确实看不到之后，才允许再开下面的 oneStep。
+        "visibleToUser": False,
+        # 「一步打开」：直接发带链接的整卡跳转卡，点 1 次就进 H5。
+        # 代码里强制要求 visibleToUser 同时为真（否则链接会全员可见），
+        # 误配不会泄密；服务端若不认该字段，发卡失败会自动退回普通按钮卡。
+        "oneStep": False,
         # 同一张面板最多换几次 token（换设备/刷新用）
         "jumpRedeemMax": 6,
         "buttonText": "打开查数面板",
@@ -1020,6 +1030,36 @@ def build_owner_link_card(
     return card
 
 
+def pick_group_card(
+    guard: dict[str, Any],
+    cfg: dict[str, Any],
+    task_id: str,
+    token: str,
+    owner_id: str,
+    button_text: str,
+    jump_url: str = "",
+) -> tuple[dict[str, Any], list[str] | None, bool]:
+    """群聊这次该发哪张卡、要不要定向可见。
+
+    返回 ``(card, visible_to, one_step)``。
+
+    **安全底线（写死，不给人误配的机会）**：``oneStep`` 只有在 ``visibleToUser``
+    同时为真、且拿得到 owner 时才生效 —— 没有定向可见就发带链接的卡，等于把
+    链接贴到群里。所以：
+
+      visibleToUser=false + oneStep=true  →  仍是**无链接**的按钮卡（拒绝换卡）
+      visibleToUser=true  + oneStep=false →  无链接按钮卡，但只给发起人看（探针）
+      visibleToUser=true  + oneStep=true  →  带链接整卡跳转卡，点 1 次打开
+    """
+    visible = bool(guard.get("visibleToUser", False)) and bool(owner_id)
+    one_step = visible and bool(guard.get("oneStep", False))
+    if one_step:
+        card = build_owner_link_card(task_id, token, cfg)
+    else:
+        card = build_panel_button_card(task_id, cfg, button_text, jump_url)
+    return card, ([owner_id] if visible else None), one_step
+
+
 async def deliver_card_to_owner_only(
     channels: list[Any],
     frame: Any,
@@ -1376,6 +1416,7 @@ async def _send_one(
     card: dict[str, Any],
     stream_id: str = "",
     stream_content: str = "",
+    visible_to: list[str] | None = None,
 ) -> tuple[bool, str]:
     """发一张卡片。
 
@@ -1416,6 +1457,41 @@ async def _send_one(
     reply = getattr(client, "reply_template_card", None)
     if not callable(reply):
         return False, f"no reply_template_card [{diagnose(channel)}]"
+
+    # ---- 定向可见（visible_to_user）------------------------------------
+    # 企微**应用消息** API 有这个字段：只有列表里的人看得到这条消息。智能机器人
+    # 的 WS 协议没文档承诺支持，2026-09-21 前未知。它若成立，群聊就能一步打开
+    # （直接发带链接卡 + 只给发起人看），不必再走"点按钮换卡"两步。
+    #   ⚠️ 风险是字段被**静默忽略** —— 那样卡片会全员可见。所以主链路必须先
+    #   用**不含链接**的卡验证可见性（visibleToUser=true + oneStep=false），
+    #   肉眼确认群里其他人看不到之后，才允许打开 oneStep。
+    # 服务端不认时 reply 会直接报错 → 自动退回全员可见，绝不让人收不到卡片。
+    if visible_to:
+        raw = getattr(client, "reply", None)
+        if callable(raw):
+            try:
+                res = await raw(
+                    frame,
+                    {
+                        "msgtype": "template_card",
+                        "template_card": card,
+                        "visible_to_user": list(visible_to),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.info(
+                    "%s visible_to_user rejected (%s: %s); fallback to plain card",
+                    LOG_PREFIX, type(exc).__name__, str(exc)[:200],
+                )
+            else:
+                v_ok, v_why = _check_reply(res)
+                if v_ok:
+                    return True, f"ok(visible) via {_label(channel)}"
+                logger.info(
+                    "%s visible_to_user ack error (%s); fallback to plain card",
+                    LOG_PREFIX, v_why[:200],
+                )
+
     try:
         result = await reply(frame, card)
     except Exception as exc:  # noqa: BLE001 - P0 就要看清错误长什么样
@@ -1455,6 +1531,7 @@ async def send_card(
     card: dict[str, Any],
     stream_id: str = "",
     stream_content: str = "",
+    visible_to: list[str] | None = None,
 ) -> tuple[bool, str]:
     """逐个候选尝试发卡片，第一个成功即止。返回 (是否成功, 说明)。
 
@@ -1484,7 +1561,7 @@ async def send_card(
 
     failures = []
     for ch in channels:
-        ok, reason = await _send_one(ch, frame, card)
+        ok, reason = await _send_one(ch, frame, card, visible_to=visible_to)
         if ok:
             return True, f"ok via {_label(ch)}"
         failures.append(f"{_label(ch)}: {reason}")
@@ -1682,12 +1759,22 @@ class QueryCardTriggerHook(HookBase):
                 base = h5_base_url(cfg)
                 if base:
                     jump_url = f"{base}?task={urllib.parse.quote(task_id)}"
-            card = build_panel_button_card(task_id, cfg, button_text, jump_url)
+
+            card, visible_to, one_step = pick_group_card(
+                guard, cfg, task_id, token, owner_id, button_text, jump_url
+            )
+            # one_step 时链接在卡片里；这个变量只用于 markdown 兜底，恒空，
+            # 免得哪天兜底被打开把链接泄到群里
             url = ""
             if jump_url:
                 logger.info(
                     "%s button jump enabled task=%s url=%s",
                     LOG_PREFIX, task_id, jump_url,
+                )
+            if visible_to:
+                logger.info(
+                    "%s visible_to_user=[%s] one_step=%s task=%s",
+                    LOG_PREFIX, owner_id, one_step, task_id,
                 )
             # 关键：按钮模式下**必须**关掉 markdown 兜底 —— 否则卡片一旦发送
             # 失败，兜底会把链接以 markdown 发到群里，链接就泄漏了。
@@ -1746,15 +1833,15 @@ class QueryCardTriggerHook(HookBase):
             card,
             sid if absorb else "",
             stream_content=str(delivery.get("placeholder_closing_text") or ""),
+            visible_to=visible_to,
         )
 
-        # ---- 一步交付（instantDelivery，实验项）--------------------------
+        # ---- 一步交付（instantDelivery，⚠️ 已证伪）-----------------------
         # 卡片发出去后，立刻试着只把**发起人**看到的那张卡换成带链接的面板卡。
-        #   成功 → 他点 1 次就进 H5（群里依然没有链接）
-        #   失败 → 他看到的还是这张不含链接的按钮卡 → 退回两步
-        # 两种结果链接都没进群，所以这个开关可以放心开着试。
-        # 存疑点：aibot 的 update_template_card 文档只承诺在 template_card_event
-        # 的 5s 窗口内可用，对普通**入站消息帧**放不放行得靠真机验证。
+        # **2026-09-21 真机结论：走不通。** 企微返回
+        #   errcode=846606 "request already responded, cannot respond again"
+        # 即同一个 req_id 只允许响应一次——发卡已经用掉了它，没有第二次机会。
+        # 保留代码只为留档，**不要打开这个开关**，改走 visibleToUser + oneStep。
         instant = False
         if ok and button_delivery and bool(guard.get("instantDelivery", False)):
             try:
