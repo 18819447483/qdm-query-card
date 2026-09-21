@@ -160,8 +160,8 @@ CLI 自动探测顺序：配置 `cliPath` → 环境变量 `QDM_METRIC_CLI` → 
 | `buttonDelivery` | `true` 时群聊只发按钮卡，**链接不出现在群里** |
 | `buttonJump` | ⚠️ **保持 `false`**。给按钮加 `type=1 + url` 能一步打开页面，但实测企微**不推回调**，服务端拿不到点击者身份，隔离会失效 |
 | `instantDelivery` | ❌ **已证伪，保持 `false`**。2026-09-21 真机：企微返回 `errcode=846606 request already responded, cannot respond again` —— 一个 `req_id` 只能响应一次，发卡已经用掉了它 |
-| `visibleToUser` | 🧪 实验项。回复时带 `visible_to_user=[发起人]`，只有他看得到这条消息（企微**应用消息** API 的字段，机器人 WS 未承诺支持）。单独开启**不含链接**，可安全验证可见性 |
-| `oneStep` | 🧪 实验项。直接发带链接的整卡跳转卡，点 1 次进 H5。**代码强制要求 `visibleToUser` 同时为真**，误配不会泄密；服务端不认字段则自动退回按钮卡 |
+| `visibleToUser` | ❌ **已证伪，保持 `false`**。2026-09-21 真机：带该字段的回复被服务端**正常接受**（errcode=0）但**静默忽略**，群里其他人照样看得到、点得到那张卡 |
+| `oneStep` | ⛔ 依赖 `visibleToUser`，后者无效则它永远发不出去，保持 `false`。安全底线仍在：`pick_group_card` 保证误配时**永不**发出带链接的卡 |
 | `mode` | `claim`（首开认领）/ `strict`（输入账号比对）/ `none`。按钮交付签发的 token 自带免认领标记，同一用户的手机与电脑互不干扰 |
 | `attachListener` | 卡片事件监听开关，正式链路依赖它，保持 `true` |
 
@@ -204,6 +204,10 @@ direct 模式的结果不进会话上下文，所以插件会缓存最近一次�
 
 第二步点的是**整张卡**（`text_notice` 整卡跳转），不是再找一个小按钮。私聊不受影响，一直是点开即用。
 
+**隔离已真机复验**（2026-09-21 14:43）：`linjiahong2` 触发的面板，群友 `zhujinxia`
+点按钮 → 回调拿到 `userid=zhujinxia` ≠ owner → 判定 `kind=other`，只有他看到的那张卡
+被换成「🔒 这不是你的面板」，发起人的卡片不受影响。
+
 ### 一次尝试与它的结论：`instantDelivery` ❌
 
 上面第二步本来可以省：群里 @机器人那一刻，**入站消息帧本身就带着 `body.from.userid`**，身份不用靠按钮回调去取。所以只要在卡片发出后，立刻把**只有发起人看到的那张卡**换成带链接版本，他就点 1 次能进 H5。
@@ -221,30 +225,38 @@ errcode=846606, errmsg=request already responded, cannot respond again
 **同一个 `req_id` 只允许响应一次**，发卡已经把它用掉了，没有第二次机会。所以这条路
 彻底关闭（代码保留只为留档，`instantDelivery` 恒 `false`）。
 
-### 现在的方向：`visibleToUser` + `oneStep` 🧪
+### 第二次尝试与它的结论：`visibleToUser` ❌
 
-既然只有**一次**回复机会，差异化信息就必须塞进这唯一一次回复里 —— 也就是企微应用
-消息 API 的 `visible_to_user` 字段（只有列表里的人看得到这条消息）。它若成立，群聊
-就能真正一步：
+既然只有**一次**回复机会，差异化信息就只能塞进这唯一一次回复里 —— 也就是企微应用
+消息 API 的 `visible_to_user` 字段（只有列表里的人看得到这条消息）。
+
+按安全顺序先只开 `visibleToUser`（卡片仍是**不含链接**的按钮卡），验证群里其他人
+看不看得到。2026-09-21 14:42 真机结果：
 
 ```
-@机器人 触发 → 回复带链接卡 + visible_to_user=[发起人]
-             → 发起人：看到卡片，点 1 次进 H5
-             → 群友：这条消息对他们根本不存在
+14:42:23  visible_to_user=[linjiahong2] one_step=False
+14:42:23  card SENT reason=ok              ← 服务端正常接受，errcode=0，没走回退
+14:43:33  CARD EVENT userid=zhujinxia      ← 群友看得到，而且点得到
 ```
 
-⚠️ **必须按顺序验证**，因为字段有可能被服务端**静默忽略**（那样卡片就全员可见了）：
+**字段被静默忽略** —— 不报错、不拒绝，就是不生效。所以这条路也关闭了
+（`visibleToUser` / `oneStep` 恒 `false`，代码保留只为留档）。
 
-1. 先只开 `visibleToUser: true`（`oneStep` 保持 `false`）→ 此时发的仍是**不含链接**的
-   按钮卡，让一位群友确认他是否看得到这条消息
-2. 群友确实看不到 → 再开 `oneStep: true` → 一步打开
-3. 群友仍看得到 → 字段无效，两个都关掉，维持两步
+### 群聊「一步打开」的三道墙
 
-这两个开关都在 `trigger.json`，**热加载**，不需要重启宿主。安全底线写在
-`pick_group_card` 里并有单测覆盖：`oneStep` 单独打开**永远不会**发出带链接的卡。
+| 尝试 | 结论 |
+| --- | --- |
+| 按钮带 `url` 一步跳转（`buttonJump`） | 企微**不推回调**，拿不到点击者身份 |
+| 发卡后再差异化更新（`instantDelivery`） | `errcode=846606`，一个 `req_id` 只能响应一次 |
+| 回复时指定可见人（`visibleToUser`） | 字段被**静默忽略**，群友照样看得到、点得到 |
 
-日志关键字 `visible_to_user=[...] one_step=True/False`；若服务端不认该字段，
-会看到 `visible_to_user rejected / ack error ... fallback to plain card`，卡片照常发出。
+三条路都试过了：**只要坚持「群里其他人连面板都打不开」这条隔离底线，一步就是做不到的。**
+
+如果哪天更看重"少点一次"，唯一可换的方案是回到最初的**整卡跳转卡**（`buttonDelivery: false`）
+—— 点 1 次直接进 H5，群里任何人也能点开，但**打开后会被页面拦住**（token 绑定发起人，
+`mode: claim` 认领 / `strict` 账号比对）。差别是：现在别人**连页面都进不去**，那时别人
+进得去但立刻被拒。链接本身不会显示在群聊里，但仍可点。要不要这么换是产品权衡，
+改一个配置即可，无需改代码。
 
 ---
 
