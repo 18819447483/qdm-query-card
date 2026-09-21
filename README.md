@@ -145,13 +145,40 @@ qwenpaw serve --host 0.0.0.0 --port 8088
   "direct": {
     "runtimeMcpUrl": "http://127.0.0.1:8765/mcp",
     "runtimeTokenFile": "",   // 留空则用环境变量 QDM_AUTH_RUNTIME_TOKEN_FILE
-    "cliPath": ""             // 留空则自动探测；生产环境建议显式指定
+    "cliPath": "",            // 留空则自动探测；生产环境建议显式指定
+    "maxRows": 20,            // 结果表格最多展示几行
+    "includeConditions": true // 结果正文顶部回显中文查询条件
   },
   "cli": { "path": "" }       // 维度值搜索用的 CLI，留空则自动探测
 }
 ```
 
 CLI 自动探测顺序：配置 `cliPath` → 环境变量 `QDM_METRIC_CLI` → 平台默认搜索根。
+
+#### 结果正文回显查询条件
+
+`direct` 是零 LLM 直出，如果只推一张表，回到企微就看不出这表查的是什么（时间范围、
+口径、过滤值全留在 H5 里了）。所以结果正文顶部会带一段中文条件：
+
+```
+**查询条件**
+时间：2026-09-01 ~ 2026-09-07（日粒度）
+口径：汇总
+指标：销售额、销售数量
+行维度：管理区域
+过滤：管理区域维度只看华南(CN01)、华北(CN02)
+对比：同比
+
+| 销售额 | 管理区域 |
+| --- | --- |
+| 100 | 华南 |
+```
+
+口径会翻成中文（`SUMMARY` → 汇总），指标/维度只显示中文名不显示英文编码，
+过滤值最多列 8 个（超出补「等 N 个」，避免刷屏）。不想要就设 `includeConditions: false`。
+
+注意这段条件**只加在推送给用户的正文里**，追问注入 Agent 的上下文仍是「`render_summary`
+短摘要 + 表格」——那里面本来就有一份条件，再加就重复了。
 
 ### `groupGuard`（群聊隔离）
 
@@ -320,6 +347,7 @@ errcode=846606, errmsg=request already responded, cannot respond again
 | `probe_test.py` | 卡片事件监听与回调处理（35 项） |
 | `platform_test.py` | 跨平台 CLI 探测与 token 兜底（14 项） |
 | `cooldown_test.py` | 提交冷却：完成后收缩、失败释放、按人不按会话、预检不占槽（20 项） |
+| `direct_conditions_test.py` | 结果回显中文条件；含**注入文本回归**（抽出公共函数后一字未变）（20 项） |
 | `instant_delivery_test.py` | 一步交付：群里卡绝不含链接、只替换发起人、失败安全退回（23 项，路径已证伪，留档） |
 | `visible_delivery_test.py` | 定向可见 / 一步打开：误配绝不泄密、字段被拒自动退回、send_card 透传（31 项） |
 | `concurrency_test.py` | 并发压测（HTTP 层，需宿主在跑）：`--mode dry` 不查数，`--mode real` 真实并发提交 |

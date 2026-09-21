@@ -84,7 +84,8 @@
     "cliPath": "",
     "timeoutSec": 90.0,
     "blobTimeoutSec": 8.0,
-    "maxRows": 20
+    "maxRows": 20,
+    "includeConditions": true
   },
 
   "cli": {

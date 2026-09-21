@@ -222,6 +222,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timeoutSec": 90.0,
         "blobTimeoutSec": 8.0,
         "maxRows": 20,
+        # 结果正文顶部回显中文查询条件（时间/口径/指标/维度/过滤/对比）。
+        # direct 是零 LLM 直出，原本只推一张表，回到企微就看不出这表查的是
+        # 什么（条件都留在 H5 里了）；带上条件后截图转发也自带上下文。
+        # 过滤值最多列 8 个，超出补「等 N 个」，避免刷屏。
+        "includeConditions": True,
     },
     # qdm-metric-cli（dim values 实时搜索用）。path 为空则自动探测
     "cli": {"path": "", "timeoutSec": 20.0},
@@ -2138,17 +2143,27 @@ def _han_only(items: Any, limit: int = 40) -> list[str]:
     return out
 
 
-def _render_han_submission(body: dict[str, Any], include_value_ids: bool) -> str:
-    """召回友好的注入文本：指标/口径/维度/过滤全中文。
+def _condition_lines(
+    body: dict[str, Any],
+    include_value_ids: bool = True,
+    max_filter_values: int = 50,
+) -> list[str]:
+    """查询条件的**纯中文**行：时间 / 口径 / 指标 / 行维度 / 过滤 / 对比。
+
+    ⚠️ 这段文本**同时**喂给召回器（见 ``_render_han_submission``），改动务必
+    谨慎 —— 铁律见本文件上方「注入文本构造」注释块：指标只写中文名、口径用
+    中文、ASCII 只留日期与区域码。
 
     ``include_value_ids``：过滤值是否带 ID。区域码（CN01/DC01）实测安全，
     但门店码（ST0001）会与英文别名撞 bigram（如 knowLostWeight），所以
-    带 ID 的版本必须过召回预检，不过就降级到无 ID 版（Agent 按 playbook
-    里的 ``dim values`` 流程自行查码）。
+    注入路径的带 ID 版本必须过召回预检。
+
+    ``max_filter_values``：单个过滤维度最多列几个值（超出补「等 N 个」）。
+    注入路径用 50（信息越全越好），给用户看的结果消息用 8（别刷屏）。
     """
     rng = body.get("range") or {}
     cmp_ = body.get("compare") or {}
-    lines = ["[手动查数面板提交]"]
+    lines: list[str] = []
 
     start, end = str(rng.get("start") or ""), str(rng.get("end") or "")
     if start or end:
@@ -2180,11 +2195,9 @@ def _render_han_submission(body: dict[str, Any], include_value_ids: bool) -> str
             if not isinstance(f, dict):
                 continue
             dim_name = str(f.get("name") or "").strip()
-            vals = f.get("values") or []
+            vals = [v for v in (f.get("values") or []) if isinstance(v, dict)]
             labels: list[str] = []
-            for v in vals[:50]:
-                if not isinstance(v, dict):
-                    continue
+            for v in vals[:max_filter_values]:
                 vname = str(v.get("name") or "").strip()
                 vid = str(v.get("id") or "").strip()
                 if not vname and not vid:
@@ -2194,17 +2207,33 @@ def _render_han_submission(body: dict[str, Any], include_value_ids: bool) -> str
                 else:
                     labels.append(vname or vid)
             if labels:
-                if dim_name:
-                    segs.append(f"{dim_name}维度只看{'、'.join(labels)}")
-                else:
-                    segs.append("只看" + "、".join(labels))
+                tail = f" 等 {len(vals)} 个" if len(vals) > len(labels) else ""
+                head = f"{dim_name}维度只看" if dim_name else "只看"
+                segs.append(head + "、".join(labels) + tail)
         if segs:
             lines.append("过滤：" + "；".join(segs))
 
     on = [k for k, v in (("同比", cmp_.get("yoy")), ("环比", cmp_.get("mom"))) if v]
     if on:
         lines.append("对比：" + "、".join(on))
+    return lines
 
+
+def render_conditions(body: dict[str, Any]) -> str:
+    """给用户看的中文查询条件（direct 结果里回显，一眼能核对查了什么）。
+
+    与 ``render_summary`` 分工不同：那个是**单行短摘要**（指标/维度各取 3 个、
+    不带过滤值），给 H5 完成页和 API 的 summary 用；这个是**完整条件**，
+    给企微结果消息的正文用。
+    """
+    lines = _condition_lines(body, include_value_ids=True, max_filter_values=8)
+    return "\n".join(lines) or "（未指定条件）"
+
+
+def _render_han_submission(body: dict[str, Any], include_value_ids: bool) -> str:
+    """召回友好的注入文本：指标/口径/维度/过滤全中文。"""
+    lines = ["[手动查数面板提交]"]
+    lines += _condition_lines(body, include_value_ids=include_value_ids)
     lines.append(_REC_REQ_TEXT)
     return "\n".join(lines)
 
@@ -2979,6 +3008,25 @@ def _format_direct_result(
     return "\n".join(lines) + f"\n\n（{note}）"
 
 
+def compose_direct_text(
+    cfg: dict[str, Any], body: dict[str, Any], table: str
+) -> str:
+    """direct 结果正文 = 中文查询条件 + 结果表格。
+
+    只作用于**推给用户**的文本；``_remember_last_query`` 存的仍是纯表格，
+    因为追问注入的上下文里已经有一份 ``render_summary`` 条件，再拼一份会重复。
+    """
+    d = cfg.get("direct") or {}
+    if not bool(d.get("includeConditions", True)):
+        return table
+    # 注：``render_conditions`` 几乎不可能返回空 —— 指标/维度没选时它也会
+    # 写出「指标：（无）」，与注入文本保持同一套措辞。这里只挡真空串。
+    cond = render_conditions(body).strip()
+    if not cond:
+        return table
+    return f"**查询条件**\n{cond}\n\n{table}"
+
+
 async def direct_query(
     payload: dict[str, Any], body: dict[str, Any]
 ) -> tuple[bool, str, str]:
@@ -3637,7 +3685,8 @@ async def _do_submit(
     if str(cfg.get("queryMode") or "agent") == "direct":
         ok, text, dwhy = await direct_query(payload, body)
         if ok:
-            sent, reason = await push_text(payload, text)
+            # 结果正文带上中文查询条件（direct 直出，回企微后看不出查的是什么）
+            sent, reason = await push_text(payload, compose_direct_text(cfg, body, text))
             logger.info(
                 "%s submit mode=direct job=%s %s reason=%s elapsed=%.0fms",
                 LOG_PREFIX,
