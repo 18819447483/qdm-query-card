@@ -181,6 +181,13 @@
   }
   .btn.pri{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:500}
   .btn:disabled{opacity:.5}
+  /* 提交前置校验的兜底提示：不 alert、不发请求，坏参数根本不出网 */
+  .toast{
+    position:fixed;left:50%;transform:translateX(-50%);bottom:74px;z-index:60;
+    max-width:78%;padding:9px 15px;border-radius:9px;font-size:13.5px;line-height:1.5;
+    background:rgba(38,42,48,.94);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18);
+    display:none;text-align:center;
+  }
 
   /* ---------- 遮罩 / 完成 ---------- */
   .mask{
@@ -250,6 +257,7 @@
     </div>
   </div>
 </div>
+<div class="toast" id="toast"></div>
 
 <script>
 (function () {
@@ -286,6 +294,16 @@
   function fail(title, detail) {
     $("boot").style.display = "flex";
     $("boot").innerHTML = "<b>" + esc(title) + "</b><div>" + esc(detail) + "</div>";
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var el = $("toast");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = "block";
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.style.display = "none"; }, 2600);
   }
 
   function showDone(summary, jobId, note) {
@@ -457,6 +475,7 @@
       el.innerHTML = html;
       renderFilterInto(g.code, c);
     });
+    syncSubmit();   // 时间范围/粒度变了 → 同步按钮可用性
   }
 
   // ---------------------------------------------------------------- 渲染：② 指标
@@ -499,6 +518,7 @@
     if (cnt) cnt.textContent = c.metrics.length ? "已选 " + c.metrics.length : "";
     var cc = $("cc-" + gid);
     if (cc) cc.textContent = c.metrics.length ? "已选 " + c.metrics.length + " 个指标" : "";
+    syncSubmit();   // 指标数量变了 → 提交按钮的可用性跟着变
   }
 
   function clearMetricSearch(gid) {
@@ -780,11 +800,54 @@
     updateTip();
   }
 
+  // ------------------------------------------------- 提交前置校验 / 冷却
+  // 指标、时间范围没选就在浏览器里拦下：既不出网，也不会因为一次手滑
+  // 去占服务端的冷却槽（服务端同样先预检再限流，这里是第一道）。
+  var submitting = false, cdTimer = null;
+
+  function blockReason() {
+    var c = card(st.active);
+    if (!c.metrics.length) return "请至少在本组选择一个指标";
+    if (!c.range.start || !c.range.end) return "请选择查询时间范围";
+    return "";
+  }
+
+  function syncSubmit() {
+    var btn = $("submit");
+    if (!btn || submitting || cdTimer) return;
+    var why = blockReason();
+    btn.disabled = !!why;
+    btn.title = why || "";
+    // 移动端没有 hover，把原因直接写在按钮上（title 只有桌面能看到）
+    btn.textContent = why
+      ? (why === "请选择查询时间范围" ? "请先选时间范围" : "请先选择指标")
+      : "提交查询";
+  }
+
+  // 服务端 429：按 retryAfter 倒计时，别让用户对着一句文案干等。
+  // 返回是否真的起了倒计时（没给秒数时前端自行恢复）。
+  function startCooldown(sec) {
+    var btn = $("submit");
+    var left = Math.max(1, parseInt(sec, 10) || 0);
+    if (!left || !btn) return false;
+    if (cdTimer) clearInterval(cdTimer);
+    function tick() {
+      if (left <= 0) { clearInterval(cdTimer); cdTimer = null; syncSubmit(); return; }
+      btn.disabled = true;
+      btn.textContent = "冷却中 " + left + "s";
+      left -= 1;
+    }
+    tick();
+    cdTimer = setInterval(tick, 1000);
+    return true;
+  }
+
   function submit() {
     var gid = st.active, c = card(gid);
-    if (!c.metrics.length) { alert("请至少在本组选择一个指标"); return; }
-    if (!c.range.start || !c.range.end) { alert("请选择查询时间范围"); return; }
+    var why = blockReason();
+    if (why) { toast(why); syncSubmit(); return; }
     var btn = $("submit");
+    submitting = true;
     btn.disabled = true;
     btn.textContent = "提交中…";
     var polName = "";
@@ -816,8 +879,7 @@
         showDone(o.j.summary, o.j.job_id, o.j.message);
         return;
       }
-      btn.disabled = false;
-      btn.textContent = "提交查询";
+      submitting = false;
       var err = (o.j && o.j.error) || ("HTTP " + o.s);
       if (o.j && o.j.blocked) {
         btn.disabled = false;
@@ -829,11 +891,19 @@
         showDone("", "", (o.j && o.j.message) || "这个链接已经提交过一次查询，请回企微会话查看结果。");
         return;
       }
-      alert("提交失败：" + err);
+      if (o.s === 429 || (o.j && o.j.code === "busy")) {
+        // 冷却：按钮上直接倒计时，到点自动恢复（没给秒数就立刻恢复）
+        toast(err);
+        if (!startCooldown(o.j && o.j.retryAfter)) syncSubmit();
+        return;
+      }
+      // 其它后端报错：不进冷却（服务端也会释放槽位），提示完立刻可重试
+      toast("提交失败：" + err);
+      syncSubmit();
     }).catch(function (e) {
-      btn.disabled = false;
-      btn.textContent = "提交查询";
-      alert("网络错误：" + e);
+      submitting = false;
+      toast("网络错误：" + e);
+      syncSubmit();
     });
   }
 

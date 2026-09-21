@@ -89,7 +89,8 @@
   },
 
   "limits": {
-    "submitCooldownSec": 180,
+    "submitCooldownSec": 15,
+    "submitInFlightSec": 60,
     "maxPendingSubmissions": 4,
     "dimValuesConcurrency": 4,
     "dimValuesCacheSec": 60

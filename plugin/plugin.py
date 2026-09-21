@@ -211,7 +211,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dimValuesConcurrency": 4,
         "dimValuesLimitMax": 200,
         "dimValuesCacheSec": 60,
-        "submitCooldownSec": 180,
+        # 提交冷却拆成两段，别再让用户干等固定 180s：
+        #   submitInFlightSec —— 占坑时的兜底上限（只防异常泄漏，正常路径用不到）
+        #   submitCooldownSec —— 任务**结束**后真正保留的冷却（防手抖连点）
+        # 任务一结束就把截止时间收缩到 now+submitCooldownSec，失败则整个释放，
+        # 于是用户感知到的等待 = 查询本身耗时 + 15s。
+        "submitInFlightSec": 60,
+        "submitCooldownSec": 15,
         "maxPendingSubmissions": 4,
     },
 }
@@ -3118,16 +3124,19 @@ async def auth_scope(login_id: str) -> dict[str, Any]:
 class SubmitBusy(Exception):
     """429：提交过快 / 排队已满。message 是给用户看的文案。"""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, retry_after: int = 0) -> None:
         super().__init__(message)
         self.message = message
+        # 剩余秒数，回给前端做倒计时（前端不用自己解析中文文案）
+        self.retry_after = retry_after
 
 
 def _validate_submission(body: dict[str, Any]) -> str:
     """提交参数预检。返回错误文案（空串=通过）。
 
-    必须在 ``claim_submit_slot`` **之前**跑：坏参数不应消耗 180s 冷却，
+    必须在 ``claim_submit_slot`` **之前**跑：坏参数不应占冷却槽，
     否则用户改完参数还要干等（实测踩过：空参数 500 后槽位泄漏）。
+    前端同样会先拦一道（``syncSubmit``），坏参数根本不该出网。
     """
     metrics = body.get("metrics")
     if not isinstance(metrics, list) or not metrics:
@@ -3143,30 +3152,73 @@ def _validate_submission(body: dict[str, Any]) -> str:
     return ""
 
 
-def claim_submit_slot(session_id: str) -> None:
-    """提交限流：每会话冷却 + 全局在途上限。
+def submit_slot_key(payload: dict[str, Any], session_id: str) -> str:
+    """限流键：**按人**而不是按会话。
 
-    inject 模式下插件感知不到 Agent 何时查完，冷却期是启发式：
-    ``limits.submitCooldownSec`` 秒内同会话不允许再提交，全局在途
-    不超过 ``limits.maxPendingSubmissions``。
+    群聊里 ``s`` 是整群的会话 id，拿它做键会让 A 的查询把 B 一起挡住
+    （同群两人先后各查一次，第二个人要陪着等满冷却）。所以键里必须带上
+    发起者账号。
     """
-    cfg = load_config()
-    limits = cfg.get("limits") or {}
-    cooldown = float(limits.get("submitCooldownSec", 180) or 0)
-    max_pending = int(limits.get("maxPendingSubmissions", 4) or 0)
-    now = time.time()
+    user = str(payload.get("u") or "")
+    return f"{user}|{session_id}" if user else session_id
+
+
+def _sweep_slots(now: float) -> None:
     for sid in [s for s, exp in _pending_jobs.items() if exp <= now]:
         _pending_jobs.pop(sid, None)
-    if cooldown > 0:
-        exp = _pending_jobs.get(session_id)
-        if exp and exp > now:
-            raise SubmitBusy(
-                f"你有一个查询正在处理中，请等结果返回后再提交（约 {int(exp - now)} 秒后可再次提交）。"
-            )
+
+
+def claim_submit_slot(session_id: str) -> None:
+    """提交占坑：每人一个坑 + 全局在途上限。
+
+    inject 模式下插件感知不到 Agent 何时查完，所以占坑时长只能启发式取
+    ``limits.submitInFlightSec``（兜底上限）。真正的收口在
+    ``finish_submit_slot`` —— 任务一结束就把截止时间收缩到
+    ``limits.submitCooldownSec``，失败则整个释放。
+    """
+    limits = load_config().get("limits") or {}
+    in_flight = float(limits.get("submitInFlightSec", 60) or 0)
+    max_pending = int(limits.get("maxPendingSubmissions", 4) or 0)
+    now = time.time()
+    _sweep_slots(now)
+    exp = _pending_jobs.get(session_id)
+    if exp and exp > now:
+        left = max(1, int(exp - now + 0.999))
+        raise SubmitBusy(
+            f"上一次提交还在处理中，请等结果返回后再提交（约 {left} 秒后可再次提交）。",
+            retry_after=left,
+        )
     if max_pending > 0 and len(_pending_jobs) >= max_pending:
-        raise SubmitBusy("当前查询排队较多，请稍等片刻再提交。")
-    if cooldown > 0:
-        _pending_jobs[session_id] = now + cooldown
+        raise SubmitBusy("当前查询排队较多，请稍等片刻再提交。", retry_after=5)
+    if in_flight > 0:
+        _pending_jobs[session_id] = now + in_flight
+
+
+def finish_submit_slot(session_id: str, ok: bool = True) -> None:
+    """任务结束时的收口。
+
+    ``ok=True`` → 把坑收缩到 ``now + submitCooldownSec``（默认 15s，只防手抖）；
+    ``ok=False`` → 整个释放，用户改完参数立刻能原 token 重试 —— 报错不该罚等待。
+    """
+    if not session_id:
+        return
+    if not ok:
+        _pending_jobs.pop(session_id, None)
+        return
+    cooldown = float((load_config().get("limits") or {}).get("submitCooldownSec", 15) or 0)
+    if cooldown <= 0:
+        _pending_jobs.pop(session_id, None)
+        return
+    now = time.time()
+    new_exp = now + cooldown
+    exp = _pending_jobs.get(session_id)
+    _pending_jobs[session_id] = new_exp if (exp is None or new_exp < exp) else exp
+
+
+def release_submit_slot(session_id: str) -> None:
+    """异常兜底：直接把坑抹掉（等价于 ok=False 的收口）。"""
+    if session_id:
+        _pending_jobs.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -3343,10 +3395,22 @@ def build_router() -> Any:
             )
         if not already_used:
             try:
-                claim_submit_slot(session_id)
+                # 限流按人（群聊里同会话不同人互不干扰，见 submit_slot_key）
+                claim_submit_slot(submit_slot_key(payload, session_id))
             except SubmitBusy as busy:
-                logger.info("%s submit throttled sid=%s", LOG_PREFIX, session_id)
-                return JSONResponse({"ok": False, "error": busy.message}, status_code=429)
+                logger.info(
+                    "%s submit throttled sid=%s retry_after=%ss",
+                    LOG_PREFIX, session_id, busy.retry_after,
+                )
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "busy",
+                        "error": busy.message,
+                        "retryAfter": busy.retry_after,
+                    },
+                    status_code=429,
+                )
             if not consume_nonce(payload):
                 # 并发请求抢先核销 → 同上，必须拦在注入之前
                 already_used = True
@@ -3380,7 +3444,7 @@ def build_router() -> Any:
             # 兜底：占坑之后任何未预期异常都必须回滚冷却槽与 nonce，
             # 否则用户改完参数还要干等冷却结束（实测踩过 92 秒事故）
             logger.exception("%s submit internal error job=%s", LOG_PREFIX, job_id)
-            _pending_jobs.pop(session_id, None)
+            release_submit_slot(submit_slot_key(payload, session_id))
             rollback_nonce(payload)
             return JSONResponse(
                 {"ok": False, "error": f"internal error: {exc}"}, status_code=500
@@ -3415,6 +3479,8 @@ async def _do_submit(
             if sent:
                 # 记下这次查询：direct 结果不进上下文，追问时靠它补回 Agent
                 _remember_last_query(session_id, payload, body, text)
+                # 直查已经跑完（通常 1-3 秒），坑立刻收缩到 15s，别再按 180s 罚站
+                finish_submit_slot(submit_slot_key(payload, session_id), ok=True)
                 return {
                     "ok": True,
                     "job_id": job_id,
@@ -3423,7 +3489,7 @@ async def _do_submit(
                     "message": "查询完成，结果已直接发送到企微会话。",
                 }
             # 直查成功但推送失败：回滚冷却与 nonce，让用户原 token 重试
-            _pending_jobs.pop(session_id, None)
+            release_submit_slot(submit_slot_key(payload, session_id))
             rollback_nonce(payload)
             return JSONResponse(
                 {"ok": False, "error": f"deliver failed: {reason}"},
@@ -3463,11 +3529,14 @@ async def _do_submit(
     )
     if not sent:
         # 回滚冷却窗口和 nonce，让用户改完立刻能原 token 重试
-        _pending_jobs.pop(session_id, None)
+        release_submit_slot(submit_slot_key(payload, session_id))
         rollback_nonce(payload)
         return JSONResponse(
             {"ok": False, "error": f"deliver failed: {reason}"}, status_code=502
         )
+    # 注入/推送已发出：Agent 侧还要跑多久插件无从得知，但插件自己的活干完了，
+    # 坑收缩到 submitCooldownSec（默认 15s）即可，不再猜一个 180s
+    finish_submit_slot(submit_slot_key(payload, session_id), ok=True)
     return {
         "ok": True,
         "job_id": job_id,
