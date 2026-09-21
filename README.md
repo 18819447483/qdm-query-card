@@ -279,6 +279,7 @@ direct 模式的结果不进会话上下文，所以插件会缓存最近一次�
 | `platform_test.py` | 跨平台 CLI 探测与 token 兜底（14 项） |
 | `cooldown_test.py` | 提交冷却：完成后收缩、失败释放、按人不按会话、预检不占槽（20 项） |
 | `instant_delivery_test.py` | 一步交付：群里卡绝不含链接、只替换发起人、失败安全退回（23 项） |
+| `concurrency_test.py` | 并发压测（HTTP 层，需宿主在跑）：`--mode dry` 不查数，`--mode real` 真实并发提交 |
 | `h5_smoke.js` | H5 启动流程（normal / task / claimed / who_required 四种模式） |
 
 `h5_smoke.js` 用 node + 迷你 DOM stub 跑，不需要浏览器：
@@ -286,6 +287,17 @@ direct 模式的结果不进会话上下文，所以插件会缓存最近一次�
 ```bash
 node h5_smoke.js normal
 ```
+
+`concurrency_test.py` 打的是宿主 HTTP 接口，**必须绕过本机 `http_proxy`**（脚本里已
+强制 `ProxyHandler({})`，否则 127.0.0.1 也会走代理拿到假 502）：
+
+```bash
+python concurrency_test.py                # dry，并发 16，不产生真实查询
+python concurrency_test.py --mode real --n 8   # 真实并发查数，避开业务高峰
+```
+
+实测参考（并发 8）：`/bootstrap` p50≈931ms（每次都问一次 auth-center）、
+`/dim-values` 冷≈1881ms → 热≈57ms（60s 缓存生效）、坏参数 `/submit` 全 400 且不占冷却槽。
 
 ---
 
