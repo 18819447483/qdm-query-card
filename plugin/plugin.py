@@ -1747,6 +1747,12 @@ class QueryCardTriggerHook(HookBase):
             guard_free=button_delivery,
         )
 
+        # ⚠️ 这两个只在群聊按钮分支里被赋值。私聊走下面的 else 分支，
+        # 若不在分支前初始化，`send_card(visible_to=...)` 会抛
+        # UnboundLocalError，整个 hook 崩掉 → 卡片发不出去（2026-09-29 真机踩到）。
+        visible_to: list[str] | None = None
+        one_step = False
+
         if button_delivery:
             _clean_panel_buttons(float(guard.get("buttonTtlSec", 3600) or 3600))
             task_id = f"{_PANEL_TASK_PREFIX}{secrets.token_hex(6)}"

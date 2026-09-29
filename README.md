@@ -318,6 +318,7 @@ errcode=846606, errmsg=request already responded, cannot respond again
 | 「上一次提交还在处理中，约 N 秒后可再次提交」 | 冷却期内重复提交，按钮会倒计时、到点自动恢复。嫌长就把 `limits.submitCooldownSec` 调小（热加载，改 `trigger.json` 即刻生效）；**报错不会占冷却槽**，空参数也不会（预检在限流前） |
 | 群里触发词不命中、私聊正常 | 群消息带 `@机器人` 前缀，插件已做剥离；若自己改匹配逻辑要注意这点 |
 | 手机能开、电脑打不开（或反之） | 认领机制把两个浏览器当成了两个人。按钮交付的 token 带免认领标记，确认走的是按钮交付 |
+| 触发词命中了但**没有卡片**，Agent 反而接着回话 | hook 主干抛异常被 `run()` 兜住了。搜日志 `[qqc] hook crashed` 看真实异常。**私聊与群聊走的是两条不同的分支**，只测一条会漏（2026-09-29 真机踩到：`visible_to` 只在群聊分支赋值，私聊触发 `UnboundLocalError`）。改动 hook 后必须跑 `hook_single_chat_test.py` |
 | 改了 `plugin.py` 没生效 | 必须重启宿主，插件没有热加载 |
 | `curl 127.0.0.1:4008` 返回 502 | 环境里有 HTTP 代理，502 是代理返回的。**判端口用 socket 直连**，别信 curl |
 
@@ -347,6 +348,7 @@ errcode=846606, errmsg=request already responded, cannot respond again
 | `probe_test.py` | 卡片事件监听与回调处理（35 项） |
 | `platform_test.py` | 跨平台 CLI 探测与 token 兜底（14 项） |
 | `cooldown_test.py` | 提交冷却：完成后收缩、失败释放、按人不按会话、预检不占槽（20 项） |
+| `hook_single_chat_test.py` | **hook 主干**回归：私聊/群聊两条路径都真跑一遍 `_run`，外加 ast 静态守卫（分支内赋值、分支外读取）（12 项） |
 | `direct_conditions_test.py` | 结果回显中文条件；含**注入文本回归**（抽出公共函数后一字未变）（20 项） |
 | `instant_delivery_test.py` | 一步交付：群里卡绝不含链接、只替换发起人、失败安全退回（23 项，路径已证伪，留档） |
 | `visible_delivery_test.py` | 定向可见 / 一步打开：误配绝不泄密、字段被拒自动退回、send_card 透传（31 项） |
